@@ -1,0 +1,504 @@
+with shopify_orders_line_items as (
+    select
+        orders.id,
+        orders.order_number as order_number_shopify,
+        orders.created_at,
+        orders.financial_status,
+        orders.customer,
+        {{sales_channel_name("orders.source_name")}},
+        case when cast(orders.created_at as date) <= cast('2023-07-31' as date) then '1'
+            when cast(orders.created_at as date) >= cast('2023-08-01' as date) and cast(orders.created_at as date) <= cast('2023-08-31' as date) then '2'
+            else '3' end as period,
+        line_items.value:id as line_items_id,
+        line_items.value:variant_id as line_items_variant_id,
+        line_items.value:sku::varchar as line_items_sku,
+        line_items.value:quantity as line_items_quantity,
+        line_items.value:price as line_items_price,
+        line_items.value:discount_allocations as line_items_discount_allocations,
+        line_items.value:tax_lines as line_items_tax_lines,
+        line_items.value:duties as line_items_duties,
+        orders.payment_gateway_names,
+
+        -- Order dense rank by customer:
+        dense_rank() over (partition by orders.customer:"id"::varchar order by orders.id asc) as order_number,
+
+    from {{ref('stg_shopify_orders')}} as orders,
+    lateral flatten(input => line_items) as line_items
+    where not line_items.value:fulfillment_service = 'gift_card'
+)
+,
+shopify_orders_refunds as (
+    select
+        orders.id,
+        orders.order_number as order_number_shopify,
+        orders.shipping_lines,
+        orders.created_at as order_created_at,
+        refund.value:created_at::timestamp as refund_created_at,
+        orders.customer,
+        {{sales_channel_name("orders.source_name")}},
+        case when cast(orders.created_at as date) <= cast('2023-07-31' as date) then '1'
+            when cast(orders.created_at as date) >= cast('2023-08-01' as date) and cast(orders.created_at as date) <= cast('2023-08-31' as date) then '2'
+            else '3' end as period,
+        refund.value:transactions as refunds_transactions,
+        refund.value:refund_line_items as refunds_line_items,
+        refund.value:order_adjustments as refunds_order_adjustments,
+        
+        -- Order dense rank by customer:
+        dense_rank() over (partition by orders.customer:"id"::varchar order by orders.id asc) as order_number
+
+    from {{ref('stg_shopify_orders')}} as orders,
+    lateral flatten(input => refunds) as refund
+)
+,
+shopify_orders_refunds_line_items as (
+    select
+        orders_refunds.*,
+        line_items.value:line_item:id::integer as refund_line_items_id,
+        line_items.value:line_item:variant_id::integer as refund_line_items_variant_id,
+        line_items.value:line_item:sku::varchar as refund_line_items_sku,
+        line_items.value:line_item:quantity::integer as refund_line_items_quantity,
+        line_items.value:line_item:pre_tax_price::float as refund_line_items_price,
+        line_items.value:line_item:discount_allocations as refund_line_items_discount_allocations,
+        line_items.value:line_item:tax_lines as refund_line_items_tax_lines
+    from shopify_orders_refunds as orders_refunds,
+    lateral flatten(input => refunds_line_items) as line_items
+)
+,
+shopify_orders_refunds_order_adjustments as (
+    select
+        orders_refunds.*,
+        order_adjustments.value:amount::float as refund_order_adjustments_amount,
+        order_adjustments.value:tax_amount::float as refund_order_adjustments_tax_amount,
+        order_adjustments.value:kind::varchar as refund_order_adjustments_kind
+    from shopify_orders_refunds as orders_refunds,
+    lateral flatten(input => refunds_order_adjustments) as order_adjustments
+)
+,
+
+returning_orders_different_product as (
+    select distinct 
+        customer:"id"::varchar as customer_id,
+        shopify_orders_line_items.id as order_id,
+        1 + dense_rank() over (partition by shopify_orders_line_items.customer:"id"::varchar order by shopify_orders_line_items.id asc) as order_number_plus_one,
+        array_agg(distinct dim_products.product_type) as all_product_types,
+        array_agg(distinct dim_products.gender) as all_genders
+    from shopify_orders_line_items
+    left join {{ref('dim_products')}}
+        on concat(coalesce(shopify_orders_line_items.line_items_sku, ''), '_', shopify_orders_line_items.period, '_', coalesce(shopify_orders_line_items.sales_channel_name, '')) = dim_products.sku_custom_id
+    where dim_products.exclude != true or dim_products.exclude is null
+    group by 1,2
+)
+,
+unioned_sales as (
+
+    -- Order transactions
+    select 
+        
+        -- Order and items identifiers
+        'product' as transaction_type,
+        'order' as sale_type,
+        shopify_orders_line_items.created_at as datetime,
+        shopify_orders_line_items.created_at as order_created_at,
+        id as order_id,
+        order_number_shopify,
+        customer:"id"::varchar as customer_id,
+        line_items_id as line_item_id,
+        line_items_variant_id as variant_id,
+        shopify_orders_line_items.line_items_sku as sku_id,
+
+        -- Order Measures: Quantity, taxes, discounts, gross_sales,...
+       -- case when dim_products.adjust_to_three_units then cast(3*line_items_quantity as integer)
+       --     else line_items_quantity end as quantity,
+        case when dim_products.adjusted_units is not null then cast(dim_products.adjusted_units*line_items_quantity as integer)
+             else line_items_quantity end as quantity,
+        coalesce(line_items_tax_lines[0]:"price_set":"shop_money":"amount"::float,0) as taxes,
+        coalesce(line_items_tax_lines[0]:rate::float,0) as tax_rate,
+        case when line_items_tax_lines[0]:"price_set":"shop_money":"amount"::float = 0 then line_items_price*line_items_quantity
+            else (line_items_price*line_items_quantity) / (1 + tax_rate) end as gross_sales,
+        line_items_price*line_items_quantity as gross_sales_with_vat,
+        case when line_items_tax_lines[0]:"price_set":"shop_money":"amount"::float = 0 then -(coalesce(line_items_discount_allocations[0]:"amount_set":"shop_money":"amount"::float, 0) + coalesce(line_items_discount_allocations[1]:"amount_set":"shop_money":"amount"::float, 0))
+            else coalesce(-(coalesce(line_items_discount_allocations[0]:"amount_set":"shop_money":"amount"::float, 0) + coalesce(line_items_discount_allocations[1]:"amount_set":"shop_money":"amount"::float, 0)) / (1 + tax_rate), 0) end as discounts,
+        coalesce(line_items_duties[0]:"amount_set":"shop_money":"amount"::float,0) as duties,
+        0 as fees,
+        0 as returns,
+        0 as shipping_revenue,
+
+        -- Returning orders:
+        case when dim_products.product_type in ('One-Time', 'Pack 3') then false
+            else true end as is_subscription_order,
+        payment_gateway_names[0]::varchar as payment_method,
+
+        -- Auxiliar dimensions for product mapping:
+        shopify_orders_line_items.sales_channel_name,
+        shopify_orders_line_items.period,
+        concat(coalesce(shopify_orders_line_items.line_items_sku, ''), '_', shopify_orders_line_items.period, '_', coalesce(shopify_orders_line_items.sales_channel_name, '')) as sku_custom_id,
+        dim_products.product_type,
+
+        -- Returning orders different product:
+        returning_orders_different_product.all_product_types as previous_order_product_types,
+        case when not array_contains(dim_products.product_type::variant, returning_orders_different_product.all_product_types) and 
+            array_size(returning_orders_different_product.all_product_types) >= 1 then true
+            else false end as is_returning_order_different_product,
+        
+        case when array_size(returning_orders_different_product.all_product_types) = 1 and is_returning_order_different_product 
+            then concat('From ', returning_orders_different_product.all_product_types[0]::varchar, ' to ', dim_products.product_type::varchar)
+            when is_returning_order_different_product then concat('From ', returning_orders_different_product.all_product_types::varchar, ' to ', dim_products.product_type::varchar)
+            else null end as cross_sell_order_products_transition,
+        
+        -- Returning orders different product_type:
+        case when not array_contains(dim_products.gender::variant, returning_orders_different_product.all_genders) and 
+            array_size(returning_orders_different_product.all_genders) >= 1 then true
+            else false end as is_returning_order_different_product_type,
+        
+        case when array_size(returning_orders_different_product.all_genders) = 1 and is_returning_order_different_product_type 
+            then concat('From ', returning_orders_different_product.all_genders[0]::varchar, ' to ', dim_products.gender::varchar)
+            when is_returning_order_different_product_type then concat('From ', returning_orders_different_product.all_genders::varchar, ' to ', dim_products.gender::varchar)
+            else null end as cross_sell_order_product_types_transition,
+
+        -- Order dimensions:
+        dim_orders.promo_code as promo_code,
+        dim_orders.promo_code_mapping
+
+    from shopify_orders_line_items
+    left join {{ref('dim_products')}}
+        on concat(coalesce(shopify_orders_line_items.line_items_sku, ''), '_', shopify_orders_line_items.period, '_', coalesce(shopify_orders_line_items.sales_channel_name, ''))::varchar = dim_products.sku_custom_id
+    left join returning_orders_different_product
+        on shopify_orders_line_items.customer:"id" = returning_orders_different_product.customer_id
+        and returning_orders_different_product.order_number_plus_one = shopify_orders_line_items.order_number
+    left join {{ref('dim_orders')}}
+        on shopify_orders_line_items.id = dim_orders.order_id
+    where dim_products.exclude != true or dim_products.exclude is null
+
+    union all
+
+    -- Shipping transactions
+    select 
+        -- Order and items identifiers
+        'shipping' as transaction_type,
+        'order' as sale_type,
+        stg_shopify_orders.created_at as datetime,
+        stg_shopify_orders.created_at as order_created_at,
+        stg_shopify_orders.id as order_id,
+        stg_shopify_orders.order_number as order_number_shopify,
+        stg_shopify_orders.customer:"id"::varchar as customer_id,
+        null as line_item_id,
+        null as variant_id,
+        null as sku_id,
+
+        -- Order Measures: Quantity, taxes, discounts, gross_sales,...
+        0 as quantity,
+        coalesce(shipping_lines[0]:tax_lines[0]:"price_set":"shop_money":"amount"::float,0) as taxes,
+        coalesce(shipping_lines[0]:tax_lines[0]:rate::float,0) as tax_rate,
+        0 as gross_sales,
+        0 as gross_sales_with_vat,
+        0 as discounts,
+        0 as duties,
+        0 as fees,
+        0 as returns,
+        coalesce(shipping_lines[0]:discounted_price::float,0) - coalesce(shipping_lines[0]:tax_lines[0]:"price_set":"shop_money":"amount"::float,0) as shipping_revenue,
+
+        -- Returning orders:
+        null as is_subscription_order,
+        payment_gateway_names[0]::varchar as payment_method,
+
+        -- Auxiliar dimensions for product mapping:
+        {{sales_channel_name("stg_shopify_orders.source_name")}},
+        case when cast(stg_shopify_orders.created_at as date) <= cast('2023-07-31' as date) then '1'
+            when cast(stg_shopify_orders.created_at as date) >= cast('2023-08-01' as date) and cast(stg_shopify_orders.created_at as date) <= cast('2023-08-31' as date) then '2'
+            else '3' end as period,
+        null as sku_custom_id,
+        null as product_type,
+
+        -- Returning orders different product:
+        --dense_rank() over (partition by stg_shopify_orders.customer:"id"::varchar order by stg_shopify_orders.id asc) as customer_order_number,
+        null as previous_order_product_types,
+        null as is_returning_order_different_product,
+        null as cross_sell_order_products_transition,
+        false as is_returning_order_different_product_type,
+        null as cross_sell_order_product_types_transition,
+
+        null as promo_code,
+        null as promo_code_mapping 
+
+    from {{ref('stg_shopify_orders')}}
+
+    union all
+
+    -- Refund transactions
+    select 
+        -- Order and items identifiers
+        'product' as transaction_type,
+        'return' as sale_type,
+        refund_created_at as datetime,
+        order_created_at,
+        id as order_id,
+        order_number_shopify,
+        customer:"id"::varchar as customer_id,
+        refund_line_items_id as line_item_id,
+        refund_line_items_variant_id as variant_id,
+        refund_line_items_sku as sku_id,
+
+        -- Order Measures: Quantity, taxes, discounts, gross_sales,...
+        -- case when dim_products.adjust_to_three_units then cast(-3*refund_line_items_quantity as integer)
+        --     else -refund_line_items_quantity end as quantity,
+        case when dim_products.adjusted_units is not null then cast(-dim_products.adjusted_units*refund_line_items_quantity as integer)
+             else -refund_line_items_quantity end as quantity,
+        -coalesce(refund_line_items_tax_lines[0]:"price_set":"shop_money":"amount"::float,0) as taxes,
+        -- round((-refund_line_items_price + coalesce(refund_line_items_discount_allocations[0]:"amount_set":"shop_money":"amount"::float,0)) * coalesce(refund_line_items_tax_lines[0]:rate::float,0),2) as taxes,
+        coalesce(refund_line_items_tax_lines[0]:rate::float,0) as tax_rate,
+        0 as gross_sales,
+        0 as gross_sales_with_vat,
+        0 as discounts,
+        0 as duties,
+        0 as fees,
+        -coalesce(refund_line_items_price,0) as returns,
+        0 as shipping_revenue,
+
+        -- Returning orders:
+        case when dim_products.product_type in ('One-Time', 'Pack 3') then false
+            else true end as is_subscription_order,
+        refunds_transactions[0]:gateway::varchar as payment_method,
+
+        -- Auxiliar dimensions for product mapping:
+        shopify_orders_refunds_line_items.sales_channel_name,
+        shopify_orders_refunds_line_items.period,
+        concat(coalesce(shopify_orders_refunds_line_items.refund_line_items_sku, ''), '_', shopify_orders_refunds_line_items.period, '_', coalesce(shopify_orders_refunds_line_items.sales_channel_name, '')) as sku_custom_id,
+        dim_products.product_type,
+
+        -- Returning orders different product:
+        --shopify_orders_refunds_line_items.order_number as customer_order_number,
+        null as previous_order_product_types,
+        false as is_returning_order_different_product,
+        null as cross_sell_order_products_transition,
+        false as is_returning_order_different_product_type,
+        null as cross_sell_order_product_types_transition,
+
+        null as promo_code,
+        null as promo_code_mapping
+
+    from shopify_orders_refunds_line_items
+    left join {{ref('dim_products')}}
+        on concat(coalesce(shopify_orders_refunds_line_items.refund_line_items_sku, ''), '_', shopify_orders_refunds_line_items.period, '_', coalesce(shopify_orders_refunds_line_items.sales_channel_name, ''))::varchar = dim_products.sku_custom_id
+    where dim_products.exclude != true or dim_products.exclude is null
+
+    union all
+
+    -- Shipping of the Refund transactions
+    select 
+        -- Order and items identifiers
+        'shipping' as transaction_type,
+        'return' as sale_type,
+        refund_created_at as datetime,
+        order_created_at,
+        id as order_id,
+        order_number_shopify,
+        customer:"id"::varchar as customer_id,
+        null as line_item_id,
+        null as variant_id,
+        null as sku_id,
+
+        -- Order Measures: Quantity, taxes, discounts, gross_sales,...
+        0 as quantity,
+        refund_order_adjustments_tax_amount as taxes,
+        coalesce(shipping_lines[0]:tax_lines[0]:rate::float,0) as tax_rate,
+        0 as gross_sales,
+        0 as gross_sales_with_vat,
+        0 as discounts,
+        0 as duties,
+        0 as fees,
+        0 as returns,
+        round(refund_order_adjustments_amount + refund_order_adjustments_tax_amount,2) as shipping_revenue,
+
+        -- Returning orders:
+        null as is_subscription_order,
+        refunds_transactions[0]:gateway::varchar as payment_method,
+
+        -- Auxiliar dimensions for product mapping:
+        shopify_orders_refunds_order_adjustments.sales_channel_name,
+        shopify_orders_refunds_order_adjustments.period,
+        null as sku_custom_id,
+        null as product_type,
+
+        -- Returning orders different product:
+        --shopify_orders_refunds_order_adjustments.order_number as customer_order_number,
+        null as previous_order_product_types,
+        null as is_returning_order_different_product,
+        null as cross_sell_order_products_transition,
+        false as is_returning_order_different_product_type,
+        null as cross_sell_order_product_types_transition,
+
+        null as promo_code,
+        null as promo_code_mapping
+
+    from shopify_orders_refunds_order_adjustments
+    where refund_order_adjustments_kind = 'shipping_refund'
+
+    union all
+
+    -- Refund transactions
+    select 
+        -- Order and items identifiers
+        'product' as transaction_type,
+        'return' as sale_type,
+        refund_created_at as datetime,
+        order_created_at,
+        id as order_id,
+        order_number_shopify,
+        customer:"id"::varchar as customer_id,
+        null as line_item_id,
+        null as variant_id,
+        null as sku_id,
+
+        -- Order Measures: Quantity, taxes, discounts, gross_sales,...
+        0 as quantity,
+        refund_order_adjustments_tax_amount as taxes,
+        coalesce(shipping_lines[0]:tax_lines[0]:rate::float,0) as tax_rate,
+        0 as gross_sales,
+        0 as gross_sales_with_vat,
+        0 as discounts,
+        0 as duties,
+        0 as fees,
+        round(refund_order_adjustments_amount + refund_order_adjustments_tax_amount,2) as returns,
+        0 as shipping_revenue,
+
+        -- Returning orders:
+        false as is_subscription_order,
+        refunds_transactions[0]:gateway::varchar as payment_method,
+
+        -- Auxiliar dimensions for product mapping:
+        shopify_orders_refunds_order_adjustments.sales_channel_name,
+        shopify_orders_refunds_order_adjustments.period,
+        null as sku_custom_id,
+        null as product_type,
+
+        -- Returning orders different product:
+        --shopify_orders_refunds_order_adjustments.order_number as customer_order_number,
+        null as previous_order_product_types,
+        null as is_returning_order_different_product,
+        null as cross_sell_order_products_transition,
+        false as is_returning_order_different_product_type,
+        null as cross_sell_order_product_types_transition,
+
+        null as promo_code,
+        null as promo_code_mapping
+
+    from shopify_orders_refunds_order_adjustments 
+    where not refund_order_adjustments_kind = 'shipping_refund'
+
+)
+
+select 
+
+    'Shopify' as main_channel,
+    
+    -- Identifiers of the order, item, sku, and customer
+    {{ dbt_utils.generate_surrogate_key(['unioned_sales.transaction_type', 'unioned_sales.sale_type','unioned_sales.order_id','unioned_sales.line_item_id']) }} as pk, 
+    unioned_sales.order_id::VARCHAR as order_id,
+    unioned_sales.customer_id,
+    unioned_sales.line_item_id,
+    unioned_sales.variant_id,
+    unioned_sales.sku_id,
+    unioned_sales.order_number_shopify,
+    unioned_sales.sku_custom_id,
+
+    -- Order attributes
+    unioned_sales.transaction_type,
+    unioned_sales.sale_type,
+    unioned_sales.sales_channel_name,
+    unioned_sales.period,
+    unioned_sales.promo_code, 
+    unioned_sales.promo_code_mapping,
+    dim_orders.country as shipping_country,
+    dim_orders.country_code as shipping_country_code,
+    dim_orders.postal_code,
+    dim_orders.postal_code_income_level,
+    dim_orders.ccaa_iso_order,
+    dim_orders.abconversion_template,
+    dim_orders.province,
+    dim_orders.province_iso_code,
+
+    -- Product attributes
+    dim_products.market as product_market,
+    dim_products.gender,
+    dim_products.actual_gender,
+    dim_products.sku_grouped_internal,
+    unioned_sales.product_type,
+    unioned_sales.previous_order_product_types,
+
+    -- Time dimensions
+    unioned_sales.datetime::date as date,
+    unioned_sales.order_created_at,
+    unioned_sales.payment_method,
+        
+    -- Order Measures: Quantity, taxes, discounts, gross_sales,...
+    unioned_sales.quantity,
+    unioned_sales.taxes,
+    unioned_sales.tax_rate,
+    unioned_sales.gross_sales,
+    unioned_sales.discounts,
+    unioned_sales.duties,
+    unioned_sales.fees,
+    unioned_sales.returns,
+    unioned_sales.shipping_revenue,
+    gross_sales + discounts + returns as net_sales,
+    gross_sales + discounts as gross_sales_without_discounts,
+    gross_sales + discounts + returns + taxes + duties + shipping_revenue + fees as total_sales,
+    gross_sales_with_vat + discounts + returns + taxes + duties + shipping_revenue + fees as total_sales_with_vat,
+    
+    -- Subscription dimensions
+    unioned_sales.is_subscription_order,
+    
+    -- Retention dimensions
+    unioned_sales.is_returning_order_different_product,
+    unioned_sales.cross_sell_order_products_transition,
+    unioned_sales.is_returning_order_different_product_type,
+    unioned_sales.cross_sell_order_product_types_transition,
+    
+    -- Auxiliar time dimensions
+    dayofweekiso(unioned_sales.datetime::date) < dayofweekiso(current_timestamp()) as is_wtd,
+    dayofmonth(unioned_sales.datetime::date) < dayofmonth(current_timestamp()) as is_mtd,
+    dayofyear(unioned_sales.datetime::date) < dayofyear(current_timestamp()) as is_ytd,
+
+    case when date_trunc('month', unioned_sales.datetime::date) = date_trunc('month', current_date()) then 1 else 0 end as is_current_month, 
+    case when date_trunc('month', unioned_sales.datetime::date) = date_trunc('month', dateadd('month', -1, current_date())) then 1 else 0 end as is_previous_month, 
+    case when date_trunc('year', unioned_sales.datetime::date) = date_trunc('year', dateadd('year', -1, current_date())) then 1 else 0 end as is_previous_year,
+    case when month(unioned_sales.datetime::date) = month(current_date())
+              and year(unioned_sales.datetime::date) = year(dateadd('year', -1, current_date()))
+                then 1 else 0 end as is_same_month_previous_year,
+
+    dayofmonth(unioned_sales.datetime::date) as day_of_month,
+    
+    -- Customer dimensions
+    dim_customers.cohort_month,
+    dim_customers.first_promotional_code_used,
+    dim_customers.customer_segment,
+    min(order_created_at::date) over (partition by unioned_sales.customer_id) as date_first_order_customer,
+    dim_orders.customer_order_number,
+    dim_orders.is_returning_order,
+    dim_orders.recurrency_type,
+
+    case when dayofmonth(date) < dayofmonth(current_timestamp()) 
+        and month(date) = month(current_date())
+            and year(date) = year(current_date())
+               then 'MTD current month' 
+         when dayofmonth(date) < dayofmonth(current_timestamp()) 
+            and month(date) = month(dateadd('month', -1, current_date()))
+              and year(date) = year(current_date())
+                then 'MTD previous month'
+        when dayofmonth(date) < dayofmonth(current_timestamp()) 
+            and month(date) = month(current_date())
+              and year(date) = year(dateadd('year', -1, current_date()))
+                then 'MTD LY same month'
+    else NULL end as mtd_window_type,
+
+    -- Post-purchase survey
+    dim_orders.postpurchase_survey_attribution_value 
+
+from unioned_sales
+left join {{ref('dim_orders')}}
+on unioned_sales.order_id = dim_orders.order_id
+left join {{ref('dim_products')}}
+on unioned_sales.sku_custom_id = dim_products.sku_custom_id
+left join {{ref('dim_customers')}}
+on unioned_sales.customer_id = dim_customers.customer_id
+where dim_products.exclude != true or dim_products.exclude is null
