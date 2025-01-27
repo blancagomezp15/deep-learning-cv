@@ -1,0 +1,37 @@
+--PEDIDOS CON MAS DE UN ITEM Y QUE TENGAN DEVOLUCIONES
+SELECT order_id
+FROM (
+    SELECT order_id,Sum(returns) as devoluciones, COUNT(DISTINCT product_type) AS cuenta
+    FROM fct_sales
+    GROUP BY order_id
+) subquery
+WHERE cuenta > 1 and devoluciones < 0;
+
+-- DISTRIBUCION DE CLIENTES QUE HAN USADO NINGUN O VARIOS PROMO CODES
+WITH TABLA1 AS (
+    SELECT 
+        CASE 
+            WHEN COUNT(DISTINCT promo_code) = 0 THEN 'Sin promo codes'
+            WHEN COUNT(DISTINCT promo_code) = 1 THEN 'Un promo code'
+            WHEN COUNT(DISTINCT promo_code) > 1 THEN 'Más de un promo code'
+        END AS Number_promo_codes,
+        customer_id
+    FROM fct_sales
+    WHERE 
+      SALE_TYPE = 'order' 
+      AND transaction_type = 'product'
+    GROUP BY customer_id
+),
+
+TABLA2 AS (
+    SELECT 
+        Number_promo_codes,
+        COUNT(*) AS num_customers
+    FROM TABLA1
+    GROUP BY Number_promo_codes
+)
+
+SELECT 
+    *, 
+    ROUND(num_customers * 100.0 / SUM(num_customers) OVER (), 1) AS percentage
+FROM TABLA2;
