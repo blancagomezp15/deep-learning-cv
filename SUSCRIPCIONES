@@ -1,0 +1,163 @@
+ 
+--- Suscriptores Activos que cancelan: num de suscriptores que estaban activos a inicio del mes, que cancelan su suscripción durante el mes, y que mantienen todas sus suscripciones canceladas a último día del mes.   
+
+WITH AJUSTE1 AS (
+    SELECT 
+        *,
+        DATE_TRUNC('month', date) AS fecha,
+        CASE 
+            WHEN EXISTS (
+                SELECT 1 
+                FROM fct_subscriptions fs2
+                WHERE fs2.date = DATE_TRUNC('month', fct_subscriptions.date) + INTERVAL '0 DAY'
+                      AND fs2.is_active_subscription = TRUE
+                      AND fs2.CUSTOMER_ID_RECHARGE = fct_subscriptions.CUSTOMER_ID_RECHARGE
+            ) THEN 1
+            ELSE 0
+        END AS real_subscribers_activos,  --- Marca 1 si el usuario estaba activo el día 1 del mes
+        CASE 
+            WHEN EXISTS (
+                SELECT 1 
+                FROM fct_subscriptions fs3
+                WHERE fs3.date = DATE_TRUNC('month', fct_subscriptions.date) + INTERVAL '1 MONTH' - INTERVAL '1 DAY'
+                      AND fs3.is_active_subscription = TRUE
+                      AND fs3.CUSTOMER_ID_RECHARGE = fct_subscriptions.CUSTOMER_ID_RECHARGE
+            ) THEN 1
+            ELSE 0
+        END AS sigue_activo_fin_mes
+    FROM fct_subscriptions
+),
+
+
+HOLA AS(
+select 
+DATE,
+CUSTOMER_ID_RECHARGE, 
+SUBSCRIPTION_ID,
+real_subscribers_activos,
+has_canceled_subscription,
+FIRST_COUNTRY_BY_SUBSCRIBER,
+product_type,
+is_active_subscription,
+sigue_activo_fin_mes
+from AJUSTE1
+where real_subscribers_activos=1 AND has_canceled_subscription=1 AND sigue_activo_fin_mes=0
+order by date)
+
+
+select DATE_TRUNC('month', date) AS fecha,count(distinct CUSTOMER_ID_RECHARGE) as total from hola group by DATE_TRUNC('month', date);
+
+---select DATE,DATE_TRUNC('month', date) AS fecha, CUSTOMER_ID_RECHARGE, SUBSCRIPTION_ID, is_active_subscription, has_canceled_subscription from fct_subscriptions where 
+---has_canceled_subscription=1 and fecha ='2024-12-01';
+
+---select DATE,DATE_TRUNC('month', date) AS fecha, CUSTOMER_ID_RECHARGE, SUBSCRIPTION_ID, is_active_subscription, has_canceled_subscription from fct_subscriptions where 
+---CUSTOMER_ID_RECHARGE='86056721' and fecha ='2024-09-01';
+
+
+SELECT 
+    CUSTOMER_ID_RECHARGE, 
+    DATE_TRUNC('month', date) AS mes,  -- Extrae el mes
+    COUNT(DISTINCT CASE WHEN is_active_subscription = TRUE THEN SUBSCRIPTION_ID END) AS suscripciones_activas,
+    COUNT(DISTINCT CASE WHEN is_active_subscription = FALSE THEN SUBSCRIPTION_ID END) AS suscripciones_inactivas
+FROM fct_subscriptions
+WHERE EXTRACT(DAY FROM date) = 1  -- Filtra solo el día 1 de cada mes
+GROUP BY CUSTOMER_ID_RECHARGE, DATE_TRUNC('month', date)
+HAVING 
+    COUNT(DISTINCT CASE WHEN is_active_subscription = TRUE THEN SUBSCRIPTION_ID END) > 0
+    AND 
+    COUNT(DISTINCT CASE WHEN is_active_subscription = FALSE THEN SUBSCRIPTION_ID END) > 0;
+
+
+
+---157939959
+
+
+
+----Suscriptor Reactivado: suscriptor que está inactivo a 1º del mes, que se reactiva durante el mes y sigue activo a final de mes.
+
+WITH AJUSTE1 AS (
+    SELECT 
+        *,
+        DATE_TRUNC('month', date) AS fecha,
+        CASE 
+            WHEN EXISTS (
+                SELECT 1 
+                FROM fct_subscriptions fs2
+                WHERE fs2.date = DATE_TRUNC('month', fct_subscriptions.date) + INTERVAL '0 DAY'
+                      AND fs2.is_active_subscription = TRUE
+                      AND fs2.CUSTOMER_ID_RECHARGE = fct_subscriptions.CUSTOMER_ID_RECHARGE
+            ) THEN 1
+            ELSE 0
+        END AS real_subscribers_activos,  --- Marca 1 si el usuario estaba activo el día 1 del mes
+        CASE 
+            WHEN EXISTS (
+                SELECT 1 
+                FROM fct_subscriptions fs3
+                WHERE fs3.date = DATE_TRUNC('month', fct_subscriptions.date) + INTERVAL '1 MONTH' - INTERVAL '1 DAY'
+                      AND fs3.is_active_subscription = TRUE
+                      AND fs3.CUSTOMER_ID_RECHARGE = fct_subscriptions.CUSTOMER_ID_RECHARGE
+            ) THEN 1
+            ELSE 0
+        END AS sigue_activo_fin_mes
+    FROM fct_subscriptions
+)
+
+
+
+select 
+DATE,
+CUSTOMER_ID_RECHARGE, 
+SUBSCRIPTION_ID,
+real_subscribers_activos,
+has_canceled_subscription,
+has_reactivated_subscription,
+FIRST_COUNTRY_BY_SUBSCRIBER,
+product_type,
+is_active_subscription,
+sigue_activo_fin_mes,
+has_canceled_subscription
+from AJUSTE1
+where real_subscribers_activos=0 AND has_reactivated_subscription=1 AND sigue_activo_fin_mes=1
+order by date;
+
+
+select DATE_TRUNC('month', date) AS fecha,count(distinct CUSTOMER_ID_RECHARGE) as total from hola group by DATE_TRUNC('month', date);
+
+---select * from fct_subscriptions where CUSTOMER_ID_RECHARGE='122613690' AND DATE>='2024-12-01' AND DATE<'2025-01-01';
+
+
+
+
+
+
+
+----Suscriptor Reactivado que cancela: suscriptor inactivo a 1º de mes, que reactiva y que cancela y mantiene sus suscripciones canceladas a ultimo día del mes.
+
+WITH AJUSTE AS (
+    SELECT 
+        CUSTOMER_ID_RECHARGE,
+        DATE_TRUNC('month', date) AS mes,
+        MAX(CASE WHEN EXTRACT(DAY FROM date) = 1 AND is_active_subscription = 1 THEN 1 ELSE 0 END) AS activo_inicio_mes,
+        MAX(is_active_subscription) AS activo_en_el_mes, -- Si estuvo activo en algún momento del mes
+        MAX(has_canceled_subscription) AS cancelo_en_el_mes,
+        MAX(CASE WHEN EXTRACT(DAY FROM date) = EXTRACT(DAY FROM DATE_TRUNC('MONTH', date) + INTERVAL '1 MONTH' - INTERVAL '1 DAY') 
+                 AND is_active_subscription = 1 THEN 1 ELSE 0 END) AS activo_fin_mes
+    FROM fct_subscriptions
+    GROUP BY CUSTOMER_ID_RECHARGE, DATE_TRUNC('month', date)
+)
+
+SELECT count(distinct CUSTOMER_ID_RECHARGE), mes
+FROM AJUSTE
+WHERE 
+    activo_inicio_mes = 0  -- No estaba activo el primer día del mes
+    AND activo_en_el_mes = 1  -- Se activó en algún momento del mes
+    AND cancelo_en_el_mes = 1  -- Canceló en algún momento del mes
+    AND activo_fin_mes = 0  -- No estaba activo al final del mes
+GROUP BY mes
+ORDER BY mes;
+
+
+
+
+
+
