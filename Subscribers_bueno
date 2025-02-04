@@ -1,19 +1,21 @@
 
----Activos: numero de suscriptores activos el ultimo dia del mes anterior
+
+---Activos: numero de suscriptores activos el ultimo dia del mes anterior asociandolos al mes siguiente
 
  WITH subs_activos AS (
     SELECT 
         DATE_TRUNC('month', DATEADD(MONTH, 1, date)) AS fecha,-- Se asocia con el mes siguiente
         product_type,
+        gender,
         COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_activos
     FROM FCT_SUBSCRIPTIONS
     WHERE 
         date = DATEADD(DAY, -1, DATE_TRUNC('month', DATEADD(MONTH, 1, date)))  -- Último día del mes anterior correctamente manejado
         AND is_active_subscription = TRUE
-        AND FIRST_COUNTRY_BY_SUBSCRIBER IN ('Spain', 'Portugal') 
+        AND FIRST_COUNTRY_BY_SUBSCRIBER IN ('Spain','Portugal')
         AND product_type IN ('Monthly Subs', 'Quarterly Subs')
         and customer_id_recharge is not null
-    GROUP BY fecha, product_type
+    GROUP BY fecha, product_type, gender
 ),
 
 --- Suscriptores Cancelados:num de suscriptores que estaban activos a finales del mes anterior, que cancelan su suscripción durante el mes, y que mantienen todas sus suscripciones canceladas a último día del mes. 
@@ -22,6 +24,7 @@ subs_cancelados AS (
     SELECT 
         DATE_TRUNC('month', f1.date) AS fecha,
         product_type,
+        gender,
         COUNT(DISTINCT f1.CUSTOMER_ID_RECHARGE) AS total_cancelados
     FROM FCT_SUBSCRIPTIONS f1
     WHERE 
@@ -54,11 +57,11 @@ subs_cancelados AS (
             AND DATE_TRUNC('month', f4.date) = DATE_TRUNC('month', f1.date) 
         )
 
-        AND first_country_by_subscriber IN ('Spain', 'Portugal') 
+        AND first_country_by_subscriber IN ('Spain','Portugal') 
         AND product_type IN ('Monthly Subs', 'Quarterly Subs')
         and customer_id_recharge is not null
 
-    GROUP BY fecha, product_type
+    GROUP BY fecha, product_type, gender
 ),
 
 
@@ -70,11 +73,12 @@ subs_reactivados AS (
     SELECT 
         DATE_TRUNC('month', date) AS fecha,
         product_type,
+        gender,
         COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_reactivados
     FROM FCT_SUBSCRIPTIONS f1
     WHERE 
         product_type IN ('Monthly Subs', 'Quarterly Subs') 
-        AND first_country_by_subscriber IN ('Spain', 'Portugal')
+        AND first_country_by_subscriber IN ('Spain','Portugal') 
         and customer_id_recharge is not null
 
         -- 1️⃣ Estaban inactivos el último día del mes anterior
@@ -105,7 +109,7 @@ subs_reactivados AS (
             AND DATE_TRUNC('month', f4.date) = DATE_TRUNC('month', f1.date) 
         )
 
-    GROUP BY fecha, product_type
+    GROUP BY fecha, product_type, gender
 ),
 
 
@@ -115,11 +119,12 @@ subs_reactivados_cancelan AS (
     SELECT 
         DATE_TRUNC('month', date) AS fecha,
         product_type,
+        gender,
         COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_reactivados_cancelan
     FROM FCT_SUBSCRIPTIONS f1
     WHERE 
         product_type IN ('Monthly Subs', 'Quarterly Subs') 
-        AND first_country_by_subscriber IN ('Spain', 'Portugal')
+        AND first_country_by_subscriber IN ('Spain','Portugal')
         and customer_id_recharge is not null
 
         -- 1️⃣ Estaban inactivos el último día del mes anterior
@@ -159,7 +164,7 @@ subs_reactivados_cancelan AS (
             AND DATE_TRUNC('month', f5.date) = DATE_TRUNC('month', f1.date) 
         )
 
-    GROUP BY fecha, product_type
+    GROUP BY fecha, product_type, gender
 ),
 
 
@@ -170,11 +175,12 @@ nuevo_suscriptor AS (
     SELECT 
         DATE_TRUNC('month', subscriber_created_at) AS fecha,
         product_type,
+        gender,
         COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_nuevos_suscriptores
     FROM FCT_SUBSCRIPTIONS f1
     WHERE 
         product_type IN ('Monthly Subs', 'Quarterly Subs') 
-        AND first_country_by_subscriber IN ('Spain', 'Portugal') 
+        AND first_country_by_subscriber IN ('Spain','Portugal') 
         and customer_id_recharge is not null
         AND DATE_TRUNC('month', subscriber_created_at) = DATE_TRUNC('month', f1.date) -- Se creó en este mes
                 -- 1️⃣ Estaban inactivos el último día del mes anterior
@@ -185,7 +191,7 @@ nuevo_suscriptor AS (
             AND f2.is_active_subscription = TRUE  -- Al menos una suscripción activa
             AND f2.date = DATEADD(DAY, -1, DATE_TRUNC('month', f1.date)) -- Último día del mes anterior
         )
-    GROUP BY fecha, product_type
+    GROUP BY fecha, product_type, gender
 ),
 
 
@@ -195,11 +201,12 @@ nuevo_suscriptor_cancela AS (
     SELECT 
         DATE_TRUNC('month', subscriber_created_at) AS fecha,
         product_type,
+        gender,
         COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_nuevos_suscriptores_cancelan
     FROM FCT_SUBSCRIPTIONS f1
     WHERE 
         product_type IN ('Monthly Subs', 'Quarterly Subs') 
-        AND first_country_by_subscriber IN ('Spain', 'Portugal') 
+        AND first_country_by_subscriber IN ('Spain','Portugal')
         and customer_id_recharge is not null
         AND DATE_TRUNC('month', subscriber_created_at) = DATE_TRUNC('month', f1.date) -- Se creó en este mes
         AND NOT EXISTS (
@@ -228,13 +235,14 @@ nuevo_suscriptor_cancela AS (
             AND f5.date = DATEADD(DAY, -1, DATEADD(MONTH, 1, DATE_TRUNC('month', f1.date))) -- Último día del mes
         )
         
-    GROUP BY fecha,product_type
+    GROUP BY fecha,product_type, gender
 ),
 
 
 TABLA2 AS(SELECT 
     a.fecha,
     a.product_type,
+    a.gender,
     COALESCE(a.total_activos, 0) AS total_activos,
     COALESCE(c.total_cancelados, 0) AS total_cancelados,
     COALESCE(r.total_reactivados, 0) AS total_reactivados,
@@ -242,24 +250,24 @@ TABLA2 AS(SELECT
     COALESCE(nc.total_nuevos_suscriptores_cancelan, 0) AS total_nuevos_suscriptores_cancelan
     
 FROM subs_activos a
-FULL OUTER JOIN subs_cancelados c ON a.fecha = c.fecha AND a.product_type= c.product_type
-FULL OUTER JOIN subs_reactivados r ON a.fecha = r.fecha AND a.product_type= r.product_type
-FULL OUTER JOIN nuevo_suscriptor ns ON a.fecha = ns.fecha AND a.product_type= ns.product_type
-FULL OUTER JOIN nuevo_suscriptor_cancela nc ON a.fecha = nc.fecha AND a.product_type= nc.product_type
+FULL OUTER JOIN subs_cancelados c ON a.fecha = c.fecha AND a.product_type= c.product_type AND a.gender= c.gender
+FULL OUTER JOIN subs_reactivados r ON a.fecha = r.fecha AND a.product_type= r.product_type AND a.gender= r.gender
+FULL OUTER JOIN nuevo_suscriptor ns ON a.fecha = ns.fecha AND a.product_type= ns.product_type AND a.gender= ns.gender
+FULL OUTER JOIN nuevo_suscriptor_cancela nc ON a.fecha = nc.fecha AND a.product_type= nc.product_type AND a.gender= nc.gender
 ORDER BY a.fecha),
 
 
 
 ---Activos: numero de suscriptores activos el ultimo dia del mes anterior
-subs_activos AS (
+subs_activos1 AS (
     SELECT 
         DATE_TRUNC('month', DATEADD(MONTH, 1, date)) AS fecha,-- Se asocia con el mes siguiente
-        COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_activos
+        COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_activos1
     FROM FCT_SUBSCRIPTIONS
     WHERE 
         date = DATEADD(DAY, -1, DATE_TRUNC('month', DATEADD(MONTH, 1, date)))  -- Último día del mes anterior correctamente manejado
         AND is_active_subscription = TRUE
-        AND FIRST_COUNTRY_BY_SUBSCRIBER IN ('Spain', 'Portugal') 
+        AND FIRST_COUNTRY_BY_SUBSCRIBER IN ('Spain','Portugal')
         AND product_type IN ('Monthly Subs', 'Quarterly Subs')
         and customer_id_recharge is not null
     GROUP BY fecha
@@ -267,14 +275,14 @@ subs_activos AS (
 
 --- Suscriptores Cancelados:num de suscriptores que estaban activos a finales del mes anterior, que cancelan su suscripción durante el mes, y que mantienen todas sus suscripciones canceladas a último día del mes. 
 
-subs_cancelados AS (
+subs_cancelados1 AS (
     SELECT 
         DATE_TRUNC('month', f1.date) AS fecha,
-        COUNT(DISTINCT f1.CUSTOMER_ID_RECHARGE) AS total_cancelados
+        COUNT(DISTINCT f1.CUSTOMER_ID_RECHARGE) AS total_cancelados1
     FROM FCT_SUBSCRIPTIONS f1
     WHERE 
     
-         first_country_by_subscriber IN ('Spain', 'Portugal') 
+         first_country_by_subscriber IN ('Spain','Portugal') 
         AND product_type IN ('Monthly Subs', 'Quarterly Subs')
         and customer_id_recharge is not null
       
@@ -314,14 +322,14 @@ subs_cancelados AS (
 
 --- Suscriptores Reactivados:suscriptores que están inactivos el ultimo dia del mes anterior, que se reactiva durante el mes y sigue activo a final de mes.
 
-subs_reactivados AS (
+subs_reactivados1 AS (
     SELECT 
         DATE_TRUNC('month', date) AS fecha,
-        COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_reactivados
+        COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_reactivados1
     FROM FCT_SUBSCRIPTIONS f1
     WHERE 
         product_type IN ('Monthly Subs', 'Quarterly Subs') 
-        AND first_country_by_subscriber IN ('Spain', 'Portugal')
+        AND first_country_by_subscriber IN ('Spain','Portugal')
         and customer_id_recharge is not null
 
         -- 1️⃣ Estaban inactivos el último día del mes anterior
@@ -361,14 +369,14 @@ subs_reactivados AS (
   
   --- Nuevo suscriptor:suscriptor adquirido durante el mes  (no suscripción)
   
-nuevo_suscriptor AS (
+nuevo_suscriptor1 AS (
     SELECT 
         DATE_TRUNC('month', subscriber_created_at) AS fecha,
-        COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_nuevos_suscriptores
+        COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_nuevos_suscriptores1
     FROM FCT_SUBSCRIPTIONS f1
     WHERE 
         product_type IN ('Monthly Subs', 'Quarterly Subs') 
-        AND first_country_by_subscriber IN ('Spain', 'Portugal') 
+        AND first_country_by_subscriber IN ('Spain','Portugal')
         and customer_id_recharge is not null
         AND DATE_TRUNC('month', subscriber_created_at) = DATE_TRUNC('month', f1.date) -- Se creó en este mes
                 -- 1️⃣ Estaban inactivos el último día del mes anterior
@@ -385,14 +393,14 @@ nuevo_suscriptor AS (
 
 ---Nuevos suscriptores que cancelan: num de suscriptores adquiridos durante el mes y que no tienen ninguna suscripcion activa al final del mes
 
-nuevo_suscriptor_cancela AS (
+nuevo_suscriptor_cancela1 AS (
     SELECT 
         DATE_TRUNC('month', subscriber_created_at) AS fecha,
-        COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_nuevos_suscriptores_cancelan
+        COUNT(DISTINCT CUSTOMER_ID_RECHARGE) AS total_nuevos_suscriptores_cancelan1
     FROM FCT_SUBSCRIPTIONS f1
     WHERE 
         product_type IN ('Monthly Subs', 'Quarterly Subs') 
-        AND first_country_by_subscriber IN ('Spain', 'Portugal') 
+        AND first_country_by_subscriber IN ('Spain','Portugal')
         and customer_id_recharge is not null
         AND DATE_TRUNC('month', subscriber_created_at) = DATE_TRUNC('month', f1.date) -- Se creó en este mes
         AND NOT EXISTS (
@@ -429,44 +437,44 @@ nuevo_suscriptor_cancela AS (
 
 TABLA3 AS(SELECT 
     a.fecha,
-    'Total' AS product_type,
-    COALESCE(a.total_activos, 0) AS total_activos,
-    COALESCE(c.total_cancelados, 0) AS total_cancelados,
-    COALESCE(r.total_reactivados, 0) AS total_reactivados,
-    COALESCE(ns.total_nuevos_suscriptores, 0) AS total_nuevos_suscriptores,
-    COALESCE(nc.total_nuevos_suscriptores_cancelan, 0) AS total_nuevos_suscriptores_cancelan
+    COALESCE(a.total_activos1, 0) AS total_activos1,
+    COALESCE(c.total_cancelados1, 0) AS total_cancelados1,
+    COALESCE(r.total_reactivados1, 0) AS total_reactivados1,
+    COALESCE(ns.total_nuevos_suscriptores1, 0) AS total_nuevos_suscriptores1,
+    COALESCE(nc.total_nuevos_suscriptores_cancelan1, 0) AS total_nuevos_suscriptores_cancelan1
     
-FROM subs_activos a
-FULL OUTER JOIN subs_cancelados c ON a.fecha = c.fecha 
-FULL OUTER JOIN subs_reactivados r ON a.fecha = r.fecha 
-FULL OUTER JOIN nuevo_suscriptor ns ON a.fecha = ns.fecha 
-FULL OUTER JOIN nuevo_suscriptor_cancela nc ON a.fecha = nc.fecha 
+FROM subs_activos1 a
+FULL OUTER JOIN subs_cancelados1 c ON a.fecha = c.fecha 
+FULL OUTER JOIN subs_reactivados1 r ON a.fecha = r.fecha 
+FULL OUTER JOIN nuevo_suscriptor1 ns ON a.fecha = ns.fecha 
+FULL OUTER JOIN nuevo_suscriptor_cancela1 nc ON a.fecha = nc.fecha 
 ORDER BY a.fecha
 )
 
+
 SELECT * 
 FROM TABLA2
-
+WHERE fecha is not null
 UNION ALL
 
 SELECT 
     fecha,
+    'Total' AS gender,
     'Total' AS product_type,  -- Asegúrate de incluir la columna product_type
-    COALESCE((total_activos), 0) AS total_activos,
-    COALESCE((total_cancelados), 0) AS total_cancelados,
-    COALESCE((total_reactivados), 0) AS total_reactivados,
-    COALESCE((total_nuevos_suscriptores), 0) AS total_nuevos_suscriptores,
-    COALESCE((total_nuevos_suscriptores_cancelan), 0) AS total_nuevos_suscriptores_cancelan
+    COALESCE((total_activos1), 0) AS total_activos,
+    COALESCE((total_cancelados1), 0) AS total_cancelados,
+    COALESCE((total_reactivados1), 0) AS total_reactivados,
+    COALESCE((total_nuevos_suscriptores1), 0) AS total_nuevos_suscriptores,
+    COALESCE((total_nuevos_suscriptores_cancelan1), 0) AS total_nuevos_suscriptores_cancelan
 FROM TABLA3
+WHERE fecha is not null
 ORDER BY fecha;
 
 
 
 
-
-
-
-
+---COMPROBACION
+---select count(distinct customer_id_recharge) from fct_subscriptions where date_trunc('day',date)='2023-12-31' and is_active_subscription=1 AND first_country_by_subscriber IN ('Spain') AND product_type IN ('Monthly Subs', 'Quarterly Subs') ;
 
 
 
