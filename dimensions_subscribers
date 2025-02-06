@@ -1,0 +1,86 @@
+WITH hola AS (
+    SELECT *,
+
+        -- Suscriptores que tenían una suscripción activa al final del mes anterior
+        CASE
+            WHEN EXISTS (
+                SELECT 1
+                FROM fct_subscriptions AS subquery
+                WHERE subquery.customer_id_recharge = fct_subscriptions.customer_id_recharge
+                  AND subquery.date = DATEADD(DAY, -1, DATE_TRUNC('month', fct_subscriptions.date))
+                  AND subquery.is_active_subscription = TRUE
+            ) THEN 1
+            ELSE 0
+        END AS had_active_subscription_last_month,
+
+        -- Suscriptores que tenían una suscripción activa al final del mes actual
+        CASE 
+            WHEN 
+                MAX(
+                    CASE 
+                        WHEN date = DATEADD(DAY, -1, DATE_TRUNC('month', DATEADD(MONTH, 1, date))) 
+                        THEN is_active_subscription 
+                        ELSE 0 
+                    END
+                ) OVER (PARTITION BY customer_id_recharge, DATE_TRUNC('month', date)) = 1 
+            THEN 1 ELSE 0 
+        END AS has_active_subscription_end_month,
+
+        -- Nuevos suscriptores
+        CASE 
+            WHEN DATE_TRUNC('month', subscriber_created_at) = DATE_TRUNC('month', date)
+                AND NOT EXISTS (
+                    SELECT 1 
+                    FROM fct_subscriptions f
+                    WHERE f.customer_id_recharge = fct_subscriptions.customer_id_recharge
+                      AND f.is_active_subscription = 1
+                      AND f.date = DATEADD(DAY, -1, DATE_TRUNC('month', fct_subscriptions.date))
+                ) THEN 1 
+            ELSE 0 
+        END AS is_new_subscriber,
+
+        -- Nuevos suscriptores que cancelan
+        CASE 
+            WHEN DATE_TRUNC('month', subscriber_created_at) = DATE_TRUNC('month', date)
+                AND NOT EXISTS (
+                    SELECT 1 
+                    FROM fct_subscriptions f
+                    WHERE f.customer_id_recharge = fct_subscriptions.customer_id_recharge
+                      AND f.is_active_subscription = 1
+                      AND f.date = DATEADD(DAY, -1, DATE_TRUNC('month', fct_subscriptions.date))
+                )
+                AND EXISTS (
+                    SELECT 1 
+                    FROM fct_subscriptions f
+                    WHERE f.customer_id_recharge = fct_subscriptions.customer_id_recharge
+                      AND f.has_canceled_subscription = 1
+                      AND DATE_TRUNC('month', f.date) = DATE_TRUNC('month', fct_subscriptions.date)
+                )
+                AND NOT EXISTS (
+                    SELECT 1 
+                    FROM fct_subscriptions f
+                    WHERE f.customer_id_recharge = fct_subscriptions.customer_id_recharge
+                      AND f.is_active_subscription = 1
+                      AND f.date = DATEADD(DAY, -1, DATE_TRUNC('month', DATEADD(MONTH, 1, fct_subscriptions.date)))
+                ) THEN 1 
+            ELSE 0 
+        END AS is_new_subscriber_cancelled
+
+    FROM fct_subscriptions
+),
+
+resultados AS (
+    SELECT 
+        DATE_TRUNC('month', date) AS fecha,
+        COUNT(DISTINCT CASE WHEN had_active_subscription_last_month = 1 THEN customer_id_recharge ELSE NULL END) AS total_activos,
+        COUNT(DISTINCT CASE WHEN had_active_subscription_last_month = 1 AND has_canceled_subscription = 1 AND has_active_subscription_end_month = 0 THEN customer_id_recharge ELSE NULL END) AS total_cancelled,
+        COUNT(DISTINCT CASE WHEN had_active_subscription_last_month = 0 AND has_reactivated_subscription = 1 AND has_active_subscription_end_month = 1 THEN customer_id_recharge ELSE NULL END) AS total_reactivated,
+        COUNT(DISTINCT CASE WHEN is_new_subscriber_cancelled = 1 THEN customer_id_recharge ELSE NULL END) AS total_subscriber_cancel,
+        COUNT(DISTINCT CASE WHEN is_new_subscriber = 1 THEN customer_id_recharge ELSE NULL END) AS total_new
+    FROM hola
+    WHERE product_type IN ('Monthly Subs', 'Quarterly Subs') 
+      AND first_country_by_subscriber IN ('Spain', 'Portugal')
+    GROUP BY DATE_TRUNC('month', date)
+)
+SELECT *
+FROM resultados;
