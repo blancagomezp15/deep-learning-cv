@@ -1,0 +1,163 @@
+
+---BUENO OFICIAL
+
+-- Nueva tabla `was_active_status` donde usamos `was_actived_status`
+WITH was_active_status AS (
+    SELECT 
+        w.*,
+
+        -- 1️⃣ Cancelados: Cancelaron su suscripción y permanecen cancelados
+        CASE 
+            WHEN 
+            product_type IN ('Monthly Subs', 'Quarterly Subs')
+            AND customer_id_recharge IS NOT NULL
+            AND EXISTS (
+                SELECT 1 
+                FROM FCT_SUBSCRIPTIONS f
+                WHERE f.CUSTOMER_ID_RECHARGE = w.CUSTOMER_ID_RECHARGE
+                AND f.is_active_subscription = TRUE  
+                AND f.date = DATEADD(DAY, -1, DATE_TRUNC('month', w.date)) -- Último día del mes anterior
+            ) 
+            AND EXISTS (
+                SELECT 1 
+                FROM FCT_SUBSCRIPTIONS f3
+                WHERE f3.customer_id_recharge = w.customer_id_recharge
+                AND f3.has_canceled_subscription = TRUE
+                AND DATE_TRUNC('month', f3.date) = DATE_TRUNC('month', w.date)
+            )
+            AND NOT EXISTS (
+                SELECT 1 
+                FROM FCT_SUBSCRIPTIONS f4
+                WHERE f4.customer_id_recharge = w.customer_id_recharge
+                AND f4.date = DATEADD(DAY, -1, DATE_TRUNC('month', DATEADD(MONTH, 1, w.date))) 
+                AND f4.is_active_subscription = TRUE
+                AND DATE_TRUNC('month', f4.date) = DATE_TRUNC('month', w.date) 
+            ) 
+        THEN 1 ELSE 0 
+        END AS is_cancelled_subscriber,
+
+        -- 2️⃣ Reactivados: Estaban inactivos el último día del mes anterior, se reactivaron y terminaron el mes activos
+        CASE 
+            WHEN 
+            product_type IN ('Monthly Subs', 'Quarterly Subs')
+            AND customer_id_recharge IS NOT NULL
+            AND NOT EXISTS (
+                SELECT 1 
+                FROM FCT_SUBSCRIPTIONS f2
+                WHERE f2.CUSTOMER_ID_RECHARGE = w.CUSTOMER_ID_RECHARGE
+                AND f2.is_active_subscription = TRUE  
+                AND f2.date = DATEADD(DAY, -1, DATE_TRUNC('month', w.date)) 
+            )
+            AND EXISTS (
+                SELECT 1 
+                FROM FCT_SUBSCRIPTIONS f3
+                WHERE f3.CUSTOMER_ID_RECHARGE = w.CUSTOMER_ID_RECHARGE
+                AND f3.has_reactivated_subscription = TRUE  
+                AND DATE_TRUNC('month', f3.date) = DATE_TRUNC('month', w.date) 
+            )
+            AND EXISTS (
+                SELECT 1 
+                FROM FCT_SUBSCRIPTIONS f4
+                WHERE f4.CUSTOMER_ID_RECHARGE = w.CUSTOMER_ID_RECHARGE
+                AND f4.date = DATEADD(DAY, -1, DATE_TRUNC('month', DATEADD(MONTH, 1, w.date))) 
+                AND f4.is_active_subscription = TRUE
+                AND DATE_TRUNC('month', f4.date) = DATE_TRUNC('month', w.date) 
+            )
+        THEN 1 ELSE 0 
+        END AS is_reactivated_subscriber,
+
+        -- 3️⃣ Nuevos suscriptores: Se suscribieron este mes y no estaban activos el mes anterior
+        CASE 
+            WHEN 
+            product_type IN ('Monthly Subs', 'Quarterly Subs')
+            AND customer_id_recharge IS NOT NULL
+            AND DATE_TRUNC('month', subscriber_created_at) = DATE_TRUNC('month', w.date) 
+            AND NOT EXISTS (
+                SELECT 1 
+                FROM FCT_SUBSCRIPTIONS f2
+                WHERE f2.CUSTOMER_ID_RECHARGE = w.CUSTOMER_ID_RECHARGE
+                AND f2.is_active_subscription = TRUE  
+                AND f2.date = DATEADD(DAY, -1, DATE_TRUNC('month', w.date)) 
+            )
+        THEN 1 ELSE 0 
+        END AS new_subscriber,
+
+        -- 4️⃣ Nuevos suscriptores que cancelan en el mismo mes
+        CASE 
+            WHEN 
+            product_type IN ('Monthly Subs', 'Quarterly Subs')
+            AND customer_id_recharge IS NOT NULL
+            AND DATE_TRUNC('month', subscriber_created_at) = DATE_TRUNC('month', w.date) 
+            AND NOT EXISTS (
+                SELECT 1 
+                FROM FCT_SUBSCRIPTIONS f2
+                WHERE f2.CUSTOMER_ID_RECHARGE = w.CUSTOMER_ID_RECHARGE
+                AND f2.is_active_subscription = TRUE  
+                AND f2.date = DATEADD(DAY, -1, DATE_TRUNC('month', w.date)) 
+            )
+            AND EXISTS (
+                SELECT 1 
+                FROM FCT_SUBSCRIPTIONS f4
+                WHERE f4.CUSTOMER_ID_RECHARGE = w.CUSTOMER_ID_RECHARGE
+                AND f4.has_canceled_subscription = TRUE  
+                AND DATE_TRUNC('month', f4.date) = DATE_TRUNC('month', w.date) 
+            )
+            AND NOT EXISTS ( 
+            SELECT 1 
+                FROM FCT_SUBSCRIPTIONS f5
+                WHERE f5.CUSTOMER_ID_RECHARGE = w.CUSTOMER_ID_RECHARGE
+                AND f5.is_active_subscription = TRUE 
+                AND f5.date = DATEADD(DAY, -1, DATEADD(MONTH, 1, DATE_TRUNC('month', w.date))) -- Último día del mes
+        )
+        THEN 1 ELSE 0 
+        END AS new_subscriber_cancelled,
+
+        
+
+    FROM 
+        FCT_SUBSCRIPTIONS w
+)
+
+
+WITH was_actived_status AS (
+    SELECT 
+        a.*,
+        -- ✅ Verificamos si el cliente estaba activo el último día del mes anterior
+        CASE 
+            WHEN EXISTS (
+                SELECT 1
+                FROM dev.fct_subscriptions b
+                WHERE b.customer_id_recharge = a.customer_id_recharge
+                AND b.date = date_trunc('month', a.date) - INTERVAL '1 day'
+                AND b.is_active_subscription = TRUE
+                AND b.product_type IN ('Monthly Subs', 'Quarterly Subs')
+                AND b.product_type = a.product_type -- ✅ Asegurar que el `product_type` coincide
+                AND b.first_country_by_subscriber = a.first_country_by_subscriber -- ✅ También asegurar el país
+                AND b.gender=a.gender
+                and b.customer_id_recharge is not null
+            ) THEN 1
+            ELSE 0
+        END AS was_actived_last_month
+    FROM 
+        dev.fct_subscriptions a
+)
+
+
+SELECT 
+    DATE_TRUNC('month', date) AS fecha,
+    product_type,
+    gender,
+    COUNT(DISTINCT CASE WHEN was_actived_last_month = TRUE THEN customer_id_recharge ELSE NULL END) AS total_activos,
+    COUNT(DISTINCT CASE WHEN is_cancelled_subscriber = 1 THEN customer_id_recharge ELSE NULL END) AS total_cancelled,
+    COUNT(DISTINCT CASE WHEN is_reactivated_subscriber = 1 THEN customer_id_recharge ELSE NULL END) AS total_reactivated,
+    COUNT(DISTINCT CASE WHEN new_subscriber = 1 THEN customer_id_recharge ELSE NULL END) AS total_new_subscribers,
+    COUNT(DISTINCT CASE WHEN new_subscriber_cancelled = 1 THEN customer_id_recharge ELSE NULL END) AS total_new_subscriber_cancelled
+FROM 
+    was_actived_status
+WHERE 
+    product_type IN ('Monthly Subs', 'Quarterly Subs') 
+    AND first_country_by_subscriber IN ('Spain', 'Portugal') 
+GROUP BY 
+    fecha, product_type,gender;
+  
+
