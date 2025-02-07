@@ -209,7 +209,7 @@ left join {{ref('dim_dates')}}
         CASE 
             WHEN EXISTS (
                 SELECT 1
-                FROM dev.fct_subscriptions b
+                FROM subscriptions_base b
                 WHERE b.customer_id_recharge = w.customer_id_recharge
                 AND b.date = date_trunc('month', w.date) - INTERVAL '1 day'
                 AND b.is_active_subscription = TRUE
