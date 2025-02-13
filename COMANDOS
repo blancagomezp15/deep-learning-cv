@@ -35,3 +35,54 @@ SELECT
     *, 
     ROUND(num_customers * 100.0 / SUM(num_customers) OVER (), 1) AS percentage
 FROM TABLA2;
+
+
+
+
+
+----Numero de clientes nuevos adquiridos en 2024 agrupados por el total de cajas que han comprado 
+WITH CLIENTES_CREADOS_2024 AS (
+    -- Seleccionamos clientes cuyo primer pedido fue en 2024
+    SELECT DISTINCT customer_id
+    FROM fct_sales
+    WHERE 
+        sale_type = 'order'
+        AND transaction_type = 'product'
+        AND YEAR(date_first_order_customer) = 2024  -- Filtrar clientes creados en 2024
+),
+
+TOTAL_CAJAS_POR_CLIENTE AS (
+    -- Calculamos el total de cajas compradas por estos clientes, pero solo desde 2024 en adelante
+    SELECT 
+        f.customer_id,
+        SUM(f.quantity) AS total_cajas
+    FROM fct_sales f
+    INNER JOIN CLIENTES_CREADOS_2024 c
+        ON f.customer_id = c.customer_id
+    WHERE 
+        f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+        AND YEAR(f.date) >= 2024  -- Asegurar que solo contemos compras desde 2024 en adelante
+    GROUP BY f.customer_id
+),
+
+CATEGORIA_CAJAS AS (
+    -- Asignamos una categoría a cada cliente según su total de cajas
+    SELECT 
+        customer_id,
+        CASE 
+            WHEN total_cajas < 3 THEN 'Menos de 3 cajas'
+            ELSE '3 o más cajas'
+        END AS categoria_cajas,
+        total_cajas
+    FROM TOTAL_CAJAS_POR_CLIENTE
+)
+
+SELECT 
+    c.categoria_cajas,
+    COUNT(DISTINCT c.customer_id) AS total_clientes,
+    ROUND(COUNT(DISTINCT c.customer_id) * 100.0 / SUM(COUNT(DISTINCT c.customer_id)) OVER (), 2) AS porcentaje_clientes,
+    SUM(c.total_cajas) AS total_de_cajas
+FROM CATEGORIA_CAJAS c
+GROUP BY c.categoria_cajas
+ORDER BY c.categoria_cajas;
