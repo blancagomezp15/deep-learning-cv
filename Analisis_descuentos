@@ -1,0 +1,1827 @@
+-- 1. Porcentaje de pedidos totales que tienen/no tienen descuentos en el last quarter 
+WITH TABLA1 AS (
+    SELECT 
+        recurrency_type,
+        CASE 
+            WHEN promo_code_mapping IN ('No code') THEN 'Sin promo code'
+            ELSE 'Con promo code'
+        END AS Group_promo_codes,
+        COUNT(DISTINCT order_id) AS num_pedidos,
+        SUM(net_sales) AS total_net_sales
+    FROM fct_sales
+    WHERE 
+        SALE_TYPE = 'order' 
+        AND transaction_type = 'product' 
+        AND DATE >= '2024-10-29' 
+        AND DATE < '2025-01-29'
+    GROUP BY recurrency_type, Group_promo_codes
+)
+
+SELECT 
+    *,
+    ROUND(num_pedidos * 100.0 / SUM(num_pedidos) OVER (PARTITION BY recurrency_type), 1) AS percentage_pedidos,
+    ROUND(total_net_sales * 100.0 / SUM(total_net_sales) OVER (PARTITION BY recurrency_type), 1) AS percentage_sales
+FROM TABLA1;
+
+
+
+
+--- 2. ¿Cómo varía este porcentaje a lo largo del tiempo? 
+--- Se ha usado la tabla https://olistic.saivo.com/explore/?form_data_key=JZcSfApCYMUc4DDtwBppftpeWqvFngsPk8ShNOUtLgW2zwjLFRh33fY7mJ3XsZfj&slice_id=900&save_action=overwrite
+
+--- 3.¿Existen diferencias significativas de ventas netas por mercado (product_market) en el uso de descuentos? 
+--- Se ha usado la tabla https://olistic.saivo.com/explore/?form_data_key=JZcSfApCYMUc4DDtwBppftpeWqvFngsPk8ShNOUtLgW2zwjLFRh33fY7mJ3XsZfj&slice_id=900&save_action=overwrite
+
+---4.Comparar el valor neto generado por pedidos con y sin descuentos last quarter (descuentos excesivos alteran revenues?) 
+
+WITH TABLA1 AS (
+    SELECT 
+        CASE 
+            WHEN promo_code_mapping in ('No code') THEN 'Sin promo code'
+            ELSE 'Con promo code'
+        END AS Group_promo_codes,
+        sum(net_sales) as total_net_sales
+    FROM fct_sales
+    WHERE 
+      SALE_TYPE = 'order' 
+      AND transaction_type = 'product' AND DATE>= '2024-10-29' AND DATE < '2025-01-29'
+    GROUP BY Group_promo_codes
+)
+
+SELECT 
+    *, 
+    ROUND(total_net_sales * 100.0 / SUM(total_net_sales) OVER (), 1) AS percentage
+FROM TABLA1;
+
+
+--- 5.Determinar si los pedidos con descuentos tienen un mayor número de productos en comparación con los pedidos sin descuentos en el last quarter. (UPT) 
+ 
+SELECT 
+promo_code_mapping,
+    SUM(
+        CASE 
+            WHEN sale_type = 'order' AND transaction_type = 'product' 
+            THEN quantity 
+            ELSE 0 
+        END
+    ) / NULLIF(
+        COUNT(DISTINCT CASE 
+            WHEN sale_type = 'order' 
+                 AND transaction_type = 'product' 
+                 AND product_type IS NOT NULL 
+            THEN order_id 
+        END), 0
+    ) AS UPT
+FROM FCT_SALES
+WHERE sale_type = 'order' 
+      AND transaction_type = 'product' 
+      AND DATE >= '2024-10-01' 
+      AND DATE <= '2025-01-31'
+GROUP BY promo_code_mapping;
+
+
+
+--- 6 ¿Qué tipo de códigos promocionales (promo_code_mapping) generan el mayor volumen de ventas netas? 
+SELECT promo_code_mapping, round(sum(net_sales),0) as total_revenue
+from fct_sales
+where promo_code_mapping NOT IN ('null') AND DATE>= '2024-10-29' AND DATE < '2025-01-31'
+group by promo_code_mapping
+order by total_revenue desc;
+
+
+
+--- 7 Qué tipo de códigos promocionales se usan más para cada tipo de producto (product_type)? 
+WITH ranked_promos AS (
+    SELECT 
+        promo_code_mapping, 
+        product_type, 
+        COUNT(DISTINCT order_id) AS num_orders,
+        ROW_NUMBER() OVER (PARTITION BY product_type ORDER BY COUNT(DISTINCT order_id) DESC) AS rn
+    FROM fct_sales
+    WHERE sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND product_type IS NOT NULL
+        AND promo_code_mapping <> 'No code'
+        AND DATE>= '2024-10-29' AND DATE < '2025-01-31'
+    GROUP BY promo_code_mapping, product_type
+)
+SELECT promo_code_mapping, product_type, num_orders
+FROM ranked_promos
+WHERE rn = 1;
+
+--- 8 ¿Qué promociones funcionan mejor en cada mercado (product_market)? 
+
+WITH ranked_promos AS (
+    SELECT 
+        promo_code_mapping, 
+        product_market, 
+        COUNT(DISTINCT order_id) AS num_orders,
+        ROW_NUMBER() OVER (PARTITION BY product_market ORDER BY COUNT(DISTINCT order_id) DESC) AS rn
+    FROM fct_sales
+    WHERE sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND product_type IS NOT NULL
+        AND promo_code_mapping <> 'No code'
+        AND DATE>= '2024-10-29' AND DATE < '2025-01-29'
+    GROUP BY promo_code_mapping, product_market
+)
+SELECT promo_code_mapping, product_market, num_orders
+FROM ranked_promos
+WHERE rn = 1;
+
+--- 9 ¿Qué tipo de códigos promocionales son más efectivos y crean mayor recurrencia? 
+WITH ranked_promos AS (
+    SELECT 
+        promo_code_mapping, 
+        recurrency_type, 
+        COUNT(DISTINCT order_id) AS num_orders,
+        ROW_NUMBER() OVER (PARTITION BY recurrency_type ORDER BY COUNT(DISTINCT order_id) DESC) AS rn
+    FROM fct_sales
+    WHERE sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND product_type IS NOT NULL
+        AND promo_code_mapping <> 'No code'
+        AND DATE>= '2024-10-29' AND DATE < '2025-01-29'
+    GROUP BY promo_code_mapping, recurrency_type
+)
+SELECT promo_code_mapping, recurrency_type, num_orders
+FROM ranked_promos
+WHERE rn = 1;
+
+--- 10. Identificar qué promociones son más efectivas para atraer nuevos clientes (First-Time) 
+
+WITH ranked_promos AS (
+    SELECT 
+        promo_code_mapping, 
+        recurrency_type, 
+        COUNT(DISTINCT order_id) AS num_orders,
+        ROW_NUMBER() OVER (PARTITION BY recurrency_type ORDER BY COUNT(DISTINCT order_id) DESC) AS rn
+    FROM fct_sales
+    WHERE sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND product_type IS NOT NULL
+        AND promo_code_mapping <> 'No code'
+        AND DATE>= '2024-10-29' AND DATE < '2025-01-29'
+    GROUP BY promo_code_mapping, recurrency_type
+)
+SELECT promo_code_mapping, recurrency_type, num_orders
+FROM ranked_promos
+WHERE rn = 1;
+
+
+--- 11. Identificar los códigos promocionales con mayor valor promedio del pedido (AoV)  
+SELECT promo_code_mapping, 
+       ROUND(COALESCE(SUM(net_sales) / NULLIF(COUNT(DISTINCT order_id), 0), 0), 0) AS AoV
+FROM fct_sales
+WHERE sale_type = 'order' 
+    AND transaction_type = 'product' 
+    AND date >= '2024-10-29' 
+    AND date < '2025-01-29'
+GROUP BY promo_code_mapping
+ORDER BY AoV DESC;
+
+--- 12. ¿Qué porcentaje de clientes compran exclusivamente con descuentos (el 100% de sus compras tienen un descuento asociado)? 
+WITH CLIENTES_CON_DESCUENTO AS (
+    -- Identificar clientes que han usado un descuento en todos sus pedidos
+    SELECT DISTINCT customer_id
+    FROM fct_sales
+    WHERE sale_type = 'order'
+        AND transaction_type = 'product'
+        AND promo_code_mapping IS NOT NULL
+        AND promo_code_mapping != 'No code'
+),
+
+CLIENTES_CON_PEDIDOS_SIN_DESCUENTO AS (
+    -- Identificar clientes que al menos una vez han hecho un pedido sin descuento
+    SELECT DISTINCT customer_id
+    FROM fct_sales
+    WHERE sale_type = 'order'
+        AND transaction_type = 'product'
+        AND (promo_code_mapping IS NULL OR promo_code_mapping = 'No code')
+),
+
+CLIENTES_EXCLUSIVOS_DESCUENTO AS (
+    -- Filtrar clientes que solo han usado descuentos (no aparecen en la tabla de pedidos sin descuento)
+    SELECT c.customer_id
+    FROM CLIENTES_CON_DESCUENTO c
+    LEFT JOIN CLIENTES_CON_PEDIDOS_SIN_DESCUENTO s 
+        ON c.customer_id = s.customer_id
+    WHERE s.customer_id IS NULL
+),
+
+ORDENES_CLIENTES AS (
+    -- Contar el número de pedidos por cliente
+    SELECT 
+        f.customer_id,
+        COUNT(DISTINCT f.order_id) AS total_pedidos
+    FROM fct_sales f
+    INNER JOIN CLIENTES_EXCLUSIVOS_DESCUENTO c
+        ON f.customer_id = c.customer_id
+    WHERE f.sale_type = 'order' 
+        AND f.transaction_type = 'product'
+    GROUP BY f.customer_id
+)
+
+-- Distribución de clientes según su número de pedidos
+SELECT 
+    CASE 
+        WHEN total_pedidos = 1 THEN '1 pedido'
+        WHEN total_pedidos = 2 THEN '2 pedidos'
+        ELSE 'Más de 2 pedidos'
+    END AS categoria_pedidos,
+    COUNT(DISTINCT customer_id) AS total_clientes_exclusivos_descuento,
+    ROUND(100.0 * COUNT(DISTINCT customer_id) / SUM(COUNT(DISTINCT customer_id)) OVER(), 2) AS porcentaje
+FROM ORDENES_CLIENTES
+GROUP BY categoria_pedidos
+ORDER BY categoria_pedidos;
+
+
+--- Clientes que nunca han usado descuento
+WITH TABLA1 AS (
+    -- Identificar si un cliente ha usado algún descuento en algún pedido
+    SELECT 
+        customer_id,  
+        CASE 
+            WHEN promo_code_mapping = 'No code' THEN 0
+            ELSE 1
+        END AS Group_promo_codes
+    FROM fct_sales
+    WHERE sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND promo_code_mapping IS NOT NULL 
+        AND customer_id IS NOT NULL
+),
+
+TABLA2 AS (
+    -- Contar cuántas veces ha usado un código de descuento cada cliente
+    SELECT 
+        customer_id,
+        SUM(Group_promo_codes) AS TOTAL_PROMOS_USED
+    FROM TABLA1 
+    GROUP BY customer_id
+),
+
+TABLA3 AS (
+    -- Contar el número total de pedidos de cada cliente
+    SELECT 
+        customer_id,
+        COUNT(DISTINCT order_id) AS total_orders
+    FROM fct_sales
+    WHERE sale_type = 'order'
+        AND transaction_type = 'product'
+        AND customer_id IS NOT NULL
+    GROUP BY customer_id
+),
+
+CLIENTES_SIN_DESCUENTO AS (
+    -- Seleccionar clientes que nunca han usado un código de descuento (TOTAL_PROMOS_USED = 0)
+    SELECT customer_id 
+    FROM TABLA2 
+    WHERE TOTAL_PROMOS_USED = 0
+)
+
+-- Distribuir estos clientes según su número de pedidos
+SELECT 
+    CASE 
+        WHEN t3.total_orders = 1 THEN '1 pedido'
+        WHEN t3.total_orders = 2 THEN '2 pedidos'
+        ELSE 'Más de 2 pedidos'
+    END AS categoria_pedidos,
+    COUNT(DISTINCT t3.customer_id) AS total_clientes_sin_descuento,
+    ROUND(100.0 * COUNT(DISTINCT t3.customer_id) / SUM(COUNT(DISTINCT t3.customer_id)) OVER(), 2) AS porcentaje
+FROM TABLA3 t3
+INNER JOIN CLIENTES_SIN_DESCUENTO c 
+    ON t3.customer_id = c.customer_id
+GROUP BY categoria_pedidos
+ORDER BY categoria_pedidos;
+
+
+
+
+--- Numero de Clientes que han usado alguna vez descuento 
+WITH TABLA1 AS (
+    -- Identificar clientes que han usado algún descuento en algún pedido
+    SELECT 
+        customer_id,  
+        CASE 
+            WHEN promo_code_mapping = 'No code' THEN 0
+            ELSE 1
+        END AS Group_promo_codes
+    FROM fct_sales
+    WHERE sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND promo_code_mapping IS NOT NULL 
+        AND customer_id IS NOT NULL
+),
+
+TABLA2 AS (
+    -- Contar cuántas veces ha usado un código de descuento cada cliente
+    SELECT 
+        customer_id,
+        SUM(Group_promo_codes) AS TOTAL_PROMOS_USED
+    FROM TABLA1 
+    GROUP BY customer_id
+),
+
+TABLA3 AS (
+    -- Contar el número total de pedidos de cada cliente
+    SELECT 
+        customer_id,
+        COUNT(DISTINCT order_id) AS total_orders
+    FROM fct_sales
+    WHERE sale_type = 'order'
+        AND transaction_type = 'product'
+        AND customer_id IS NOT NULL
+    GROUP BY customer_id
+),
+
+CLIENTES_CON_DESCUENTO AS (
+    -- Seleccionar clientes que han usado al menos un descuento
+    SELECT customer_id 
+    FROM TABLA2 
+    WHERE TOTAL_PROMOS_USED > 0
+)
+
+-- Distribuir estos clientes según su número de pedidos
+SELECT 
+    'Clientes que han usado descuentos' AS segmento,
+    CASE 
+        WHEN t3.total_orders = 1 THEN '1 pedido'
+        WHEN t3.total_orders = 2 THEN '2 pedidos'
+        ELSE 'Más de 2 pedidos'
+    END AS categoria_pedidos,
+    COUNT(DISTINCT t3.customer_id) AS total_clientes_con_descuento,
+    ROUND(100.0 * COUNT(DISTINCT t3.customer_id) / SUM(COUNT(DISTINCT t3.customer_id)) OVER(), 2) AS porcentaje
+FROM TABLA3 t3
+INNER JOIN CLIENTES_CON_DESCUENTO c 
+    ON t3.customer_id = c.customer_id
+GROUP BY segmento, categoria_pedidos
+ORDER BY categoria_pedidos;
+
+
+
+
+--- Clientes que han usado descuentos en sus primeros pedidos y ver su distribucion de pedidos
+
+WITH PRIMER_PEDIDO AS (
+    -- Identificar la fecha del primer pedido de cada cliente
+    SELECT 
+        customer_id,
+        MIN(date) AS first_order_date
+    FROM fct_sales
+    WHERE sale_type = 'order'
+        AND transaction_type = 'product'
+        AND customer_id IS NOT NULL
+        AND promo_code_mapping IS NOT NULL
+    GROUP BY customer_id
+),
+
+PRIMER_PEDIDO_UNICO AS (
+    -- Obtener los detalles del primer pedido (asegurando una única fila por cliente)
+    SELECT
+        f.customer_id,
+        f.promo_code_mapping,
+        f.date
+    FROM (
+        SELECT DISTINCT
+            customer_id,
+            order_id,
+            promo_code_mapping,
+            date
+        FROM fct_sales
+        WHERE sale_type = 'order'
+            AND transaction_type = 'product'
+            AND customer_id IS NOT NULL
+            AND promo_code_mapping IS NOT NULL
+    ) f
+    INNER JOIN PRIMER_PEDIDO p 
+        ON f.customer_id = p.customer_id
+        AND f.date = p.first_order_date
+),
+
+PRIMER_PEDIDO_FILTRADO AS (
+    -- Filtrar solo un código de descuento por cliente (si hay varios en el primer pedido)
+    SELECT 
+        customer_id,
+        promo_code_mapping
+    FROM (
+        SELECT 
+            customer_id,
+            promo_code_mapping,
+            ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY promo_code_mapping ASC) AS row_num
+        FROM PRIMER_PEDIDO_UNICO
+    ) AS t
+    WHERE row_num = 1 -- Seleccionamos solo una fila por cliente
+),
+
+USO_DESCUENTO_PRIMER_PEDIDO AS (
+    -- Filtrar clientes que usaron un código de descuento en su primer pedido
+    SELECT 
+        customer_id
+    FROM PRIMER_PEDIDO_FILTRADO
+    WHERE promo_code_mapping != 'No code'
+),
+
+NUMERO_PEDIDOS_CLIENTES AS (
+    -- Contar el número total de pedidos por cliente
+    SELECT 
+        customer_id,
+        COUNT(DISTINCT order_id) AS total_orders
+    FROM fct_sales
+    WHERE sale_type = 'order'
+        AND transaction_type = 'product'
+        AND customer_id IS NOT NULL
+    GROUP BY customer_id
+),
+
+CLIENTES_CON_DESCUENTO_PRIMER_PEDIDO AS (
+    -- Filtrar solo clientes que usaron un descuento en el primer pedido
+    SELECT t.customer_id, t.total_orders
+    FROM NUMERO_PEDIDOS_CLIENTES t
+    INNER JOIN USO_DESCUENTO_PRIMER_PEDIDO u
+        ON t.customer_id = u.customer_id
+)
+
+-- Distribuir estos clientes según su número de pedidos
+SELECT 
+    'Clientes con descuento en primer pedido' AS segmento,
+    CASE 
+        WHEN total_orders = 1 THEN '1 pedido'
+        WHEN total_orders = 2 THEN '2 pedidos'
+        ELSE 'Más de 2 pedidos'
+    END AS categoria_pedidos,
+    COUNT(DISTINCT customer_id) AS total_clientes_con_descuento_primer_pedido,
+    ROUND(100.0 * COUNT(DISTINCT customer_id) / SUM(COUNT(DISTINCT customer_id)) OVER(), 2) AS porcentaje
+FROM CLIENTES_CON_DESCUENTO_PRIMER_PEDIDO
+GROUP BY segmento, categoria_pedidos
+ORDER BY categoria_pedidos;
+
+
+
+
+
+
+
+
+
+----CLIENTES CON USO DE DESCUENTO EN SU PRIMER PEDIDO/COHORTES
+
+WITH USO_DESCUENTO_PRIMER_PEDIDO AS (
+    -- Determinar si el cliente usó un descuento en su primer pedido
+    SELECT 
+        customer_id,
+        YEAR(date_first_order_customer) AS cohort_year,
+        CASE 
+            WHEN first_promo_code_mapping IS NOT NULL AND first_promo_code_mapping != 'No code' THEN 1 
+            ELSE 0 
+        END AS uso_descuento_primer_pedido,
+        date_first_order_customer AS first_order_date
+    FROM fct_sales
+    WHERE customer_order_number = 1
+),
+
+ORDENES_CLIENTES AS (
+    -- Contar pedidos en los primeros 12 meses desde el primer pedido del cliente
+    SELECT 
+        f.customer_id,
+        COUNT(DISTINCT ORDER_ID) AS pedidos_6_meses
+    FROM fct_sales f
+    INNER JOIN USO_DESCUENTO_PRIMER_PEDIDO u 
+        ON f.customer_id = u.customer_id
+    WHERE f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+        AND TIMESTAMPDIFF(MONTH, u.first_order_date, f.date) <= 6  -- Solo pedidos en los primeros 12 meses
+    GROUP BY f.customer_id
+)
+
+SELECT 
+    u.cohort_year,
+    u.uso_descuento_primer_pedido,
+    COUNT(DISTINCT u.customer_id) AS total_customers,
+    COALESCE(AVG(o.pedidos_6_meses), 0) AS pedidos_promedio_6_meses -- Evita NULL en el cálculo
+FROM USO_DESCUENTO_PRIMER_PEDIDO u
+LEFT JOIN ORDENES_CLIENTES o 
+    ON u.customer_id = o.customer_id
+GROUP BY u.cohort_year, u.uso_descuento_primer_pedido
+ORDER BY u.cohort_year, u.uso_descuento_primer_pedido;
+
+
+
+
+
+----CLIENTES CON USO DE DESCUENTO EN SU PRIMER PEDIDO que tienen mas de un pedido/COHORTES
+
+WITH CLIENTES_MAS_DE_UN_PEDIDO AS (
+    SELECT 
+        customer_id
+    FROM (
+        SELECT 
+            customer_id,
+            COUNT(DISTINCT order_id) AS total_orders -- Contamos pedidos únicos por cliente
+        FROM fct_sales
+        WHERE sale_type = 'order'
+            AND transaction_type = 'product'
+            AND customer_id IS NOT NULL
+            AND promo_code_mapping IS NOT NULL
+        GROUP BY customer_id
+    ) t
+    WHERE total_orders > 1 -- Filtramos clientes con más de un pedido único
+),
+
+
+PRIMER_PEDIDO AS (
+    SELECT 
+        customer_id,
+        MIN(date) AS first_order_date
+    FROM fct_sales
+    WHERE sale_type = 'order'
+        AND transaction_type = 'product'
+        AND customer_id IS NOT NULL
+        AND promo_code_mapping IS NOT NULL
+         AND customer_id IN (SELECT customer_id FROM CLIENTES_MAS_DE_UN_PEDIDO) -- Solo clientes con más de un pedido
+    GROUP BY customer_id
+),
+
+--- HAY CLIENTES CON MAS DE UN DESCUENTO POR ESO SE DUPLICAN LAS FILAS, LO QUE HE HECHO ES QUEDARME CON EL PRIMER DESCUENTO
+PRIMER_PEDIDO_UNICO AS (
+    SELECT DISTINCT
+        f.customer_id,
+        f.promo_code_mapping,
+        f.date
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO p 
+        ON f.customer_id = p.customer_id
+        AND f.date = p.first_order_date
+    WHERE f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+        AND f.customer_id IS NOT NULL
+        AND f.promo_code_mapping IS NOT NULL
+),
+
+PRIMER_PEDIDO_FILTRADO AS (
+    SELECT 
+        customer_id,
+        promo_code_mapping
+    FROM (
+        SELECT 
+            customer_id,
+            promo_code_mapping,
+            ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY promo_code_mapping ASC) AS row_num
+        FROM PRIMER_PEDIDO_UNICO
+    ) t
+    WHERE row_num = 1 -- Seleccionamos solo una fila por cliente
+),
+
+
+USO_DESCUENTO_PRIMER_PEDIDO AS (
+    SELECT 
+        customer_id,
+        CASE 
+            WHEN promo_code_mapping != 'No code' THEN 1 ELSE 0 
+        END AS uso_descuento_primer_pedido
+    FROM PRIMER_PEDIDO_FILTRADO
+),
+
+ORDENES_CLIENTES AS (
+    SELECT 
+        f.customer_id,
+        TIMESTAMPDIFF(MONTH, p.first_order_date, f.date) AS months_since_first_order,
+        COUNT(*) AS total_orders
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO p 
+        ON f.customer_id = p.customer_id
+    WHERE f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+        AND f.customer_id IS NOT NULL
+        AND f.promo_code_mapping IS NOT NULL
+        AND TIMESTAMPDIFF(MONTH, p.first_order_date, f.date) <= 6  -- Solo pedidos en los primeros 12 meses
+    GROUP BY f.customer_id, months_since_first_order
+),
+
+DISTRIBUCION AS (
+    SELECT 
+        p.customer_id,
+        YEAR(p.first_order_date) AS cohort_year,
+        u.uso_descuento_primer_pedido,
+        SUM(o.total_orders) AS pedidos_6_meses  -- SUMAMOS EL TOTAL DE PEDIDOS POR CLIENTE
+    FROM ORDENES_CLIENTES o
+    INNER JOIN PRIMER_PEDIDO p 
+        ON o.customer_id = p.customer_id
+    INNER JOIN USO_DESCUENTO_PRIMER_PEDIDO u 
+        ON o.customer_id = u.customer_id
+    GROUP BY p.customer_id, cohort_year, u.uso_descuento_primer_pedido
+)
+
+SELECT 
+    cohort_year,
+    uso_descuento_primer_pedido,
+    COUNT(customer_id) AS total_customers,
+    round(AVG(pedidos_6_meses),1) AS pedidos_promedio_6_meses
+FROM DISTRIBUCION
+GROUP BY cohort_year, uso_descuento_primer_pedido
+ORDER BY cohort_year, uso_descuento_primer_pedido;
+
+
+
+
+--- Numero total de clientes
+select count (distinct customer_id) from fct_sales WHERE sale_type = 'order'
+        AND transaction_type = 'product'
+                AND CUSTOMER_ID is not null
+        AND promo_code_mapping IS NOT NULL
+        ;
+
+
+
+--select customer_id, product_type, promo_code_mapping from fct_sales 
+--where CUSTOMER_ID='7396408099141' and sale_type = 'order' 
+    --AND transaction_type = 'product'; -- prueba para verificar lo de arriba
+
+
+-- Clientes que han usado descuentos en TODOS sus pedidos
+WITH TABLA1 AS (
+    SELECT 
+        distinct
+        customer_id,
+        order_id,
+        CASE 
+            WHEN promo_code_mapping = 'No code' THEN 0
+            ELSE 1
+        END AS Group_promo_codes
+    FROM fct_sales
+    WHERE sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND promo_code_mapping IS NOT NULL 
+        AND customer_id IS NOT NULL
+),
+
+TABLA2 AS (
+    SELECT 
+        customer_id,
+        COUNT(DISTINCT order_id) AS total_orders,
+        SUM(Group_promo_codes) AS total_promos_used
+    FROM TABLA1 
+    GROUP BY customer_id
+)
+
+SELECT COUNT(*) 
+FROM TABLA2 
+WHERE total_orders >= total_promos_used;
+
+
+--- Clientes que tienen más de un pedido y que todos sus pedidos tienen descuento
+WITH CLIENTES_MAS_DE_UN_PEDIDO AS (
+    SELECT 
+        customer_id
+    FROM fct_sales
+    WHERE sale_type = 'order'
+        AND transaction_type = 'product'
+        AND customer_id IS NOT NULL
+    GROUP BY customer_id
+    HAVING COUNT(DISTINCT order_id) > 1 -- Solo clientes con más de un pedido
+),
+
+CLIENTES_TODOS_PEDIDOS_CON_DESCUENTO AS (
+    SELECT 
+        customer_id
+    FROM fct_sales
+    WHERE sale_type = 'order'
+        AND transaction_type = 'product'
+        AND customer_id IN (SELECT customer_id FROM CLIENTES_MAS_DE_UN_PEDIDO) -- Solo clientes con más de un pedido
+    GROUP BY customer_id
+    HAVING COUNT(DISTINCT order_id) = COUNT(DISTINCT CASE WHEN promo_code_mapping IS NOT NULL AND promo_code_mapping <> 'No code' THEN order_id END)
+    -- Contamos solo los pedidos con descuento y verificamos que sean iguales al total de pedidos del cliente
+)
+
+SELECT COUNT(*) AS total_clientes_todos_con_descuento
+FROM CLIENTES_TODOS_PEDIDOS_CON_DESCUENTO;
+
+
+
+
+ 
+--- [PREGUNTAS ANA]---
+
+--1. Grupos de descuento en su primer pedido
+
+--- SIN TENER EN CUENTA SI HA HECHO UNO O MAS
+select promo_code_mapping, count(distinct customer_id) as total_clientes
+from fct_sales
+where customer_order_number=1 AND sale_type = 'order' AND transaction_type = 'product' AND customer_id IS NOT NULL ---recurrency_type= 'First-time', da igual si pongo first-time o customer_order_number=1
+group by promo_code_mapping
+ORDER BY total_clientes DESC;
+
+
+
+--- Teniendo en cuenta que tenga mas de un order
+
+WITH CLIENTES_MAS_DE_UN_PEDIDO AS (
+    SELECT 
+        customer_id
+    FROM fct_sales
+    WHERE 
+        sale_type = 'order'
+        AND transaction_type = 'product'
+        AND customer_id IS NOT NULL
+    GROUP BY customer_id
+    HAVING COUNT(DISTINCT order_id) > 1 -- Solo clientes con más de un pedido
+)
+
+SELECT 
+    first_promo_code_mapping, 
+    COUNT(DISTINCT customer_id) AS total_clientes
+FROM fct_sales
+WHERE 
+    customer_order_number = 1 -- Solo primer pedido
+    AND sale_type = 'order' 
+    AND transaction_type = 'product' 
+    AND customer_id IN (SELECT customer_id FROM CLIENTES_MAS_DE_UN_PEDIDO) -- Solo clientes con más de un pedido
+GROUP BY first_promo_code_mapping
+ORDER BY total_clientes DESC;
+
+
+
+
+
+---2. Grupos de descuento en pedidos posteriores cuando un cliente tiene mas de uno
+
+select promo_code_mapping, count(distinct customer_id) as total_clientes
+from fct_sales
+where customer_order_number=2 AND sale_type = 'order' AND transaction_type = 'product' AND customer_id IS NOT NULL
+group by promo_code_mapping
+ORDER BY total_clientes DESC;
+
+
+--- 3. ¿cuál es el AOV de los diferentes grupos de descuento en primer pedido?
+
+SELECT 
+    first_promo_code_mapping,
+    PRODUCT_TYPE,
+    ROUND(SUM(net_sales) / COUNT(DISTINCT order_id), 1) AS AoV
+FROM fct_sales
+WHERE 
+    recurrency_type = 'First-time'  -- Solo considerar el primer pedido
+    AND sale_type = 'order' 
+    AND transaction_type = 'product' 
+    AND customer_id IS NOT NULL
+    AND YEAR(DATE)='2024'
+GROUP BY first_promo_code_mapping,PRODUCT_TYPE
+ORDER BY AoV DESC;
+
+
+
+
+---3. El número de clientes que han usado un descuento en su primer pedido y que no han vuelto a usar ninguno más
+
+WITH PRIMER_PEDIDO_CON_DESCUENTO AS (
+    -- Clientes que usaron un descuento en su primer pedido
+    SELECT DISTINCT
+        customer_id
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024 
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+),
+
+CLIENTES_CON_DESCUENTO_POSTERIOR AS (
+    -- Clientes que han usado algún descuento en cualquier pedido después del primero
+    SELECT DISTINCT 
+        f.customer_id
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p 
+        ON f.customer_id = p.customer_id
+    WHERE 
+        f.customer_order_number > 1  -- Solo pedidos después del primero
+        AND f.sale_type = 'order' 
+        AND f.transaction_type = 'product'
+        AND f.promo_code_mapping IS NOT NULL  
+        AND f.promo_code_mapping != 'No code' -- Si ha usado un descuento después del primer pedido
+),
+
+CLIENTES_SIN_MAS_DESCUENTOS AS (
+    -- Filtrar clientes que no están en CLIENTES_CON_DESCUENTO_POSTERIOR
+    SELECT p.customer_id
+    FROM PRIMER_PEDIDO_CON_DESCUENTO p
+    LEFT JOIN CLIENTES_CON_DESCUENTO_POSTERIOR c
+        ON p.customer_id = c.customer_id
+    WHERE c.customer_id IS NULL -- Clientes que nunca usaron otro descuento
+)
+
+-- Obtener el número total de clientes que nunca volvieron a usar un descuento
+SELECT COUNT(DISTINCT customer_id) AS total_clientes
+FROM CLIENTES_SIN_MAS_DESCUENTOS;
+
+--- DISTRIBUCION
+
+WITH PRIMER_PEDIDO_CON_DESCUENTO AS (
+    -- Seleccionar clientes cuyo primer pedido tuvo un descuento
+    SELECT DISTINCT
+        customer_id,
+        product_type
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024
+        AND sale_type = 'order'
+        AND transaction_type = 'product'
+        AND PRODUCT_TYPE is not null
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+),
+
+USO_DESCUENTO_POSTERIOR AS (
+    -- Identificar clientes que han usado un promo_code_mapping en pedidos posteriores
+    SELECT DISTINCT 
+        f.customer_id
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p 
+        ON f.customer_id = p.customer_id
+    WHERE 
+        f.customer_order_number > 1  
+        AND f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+        AND f.promo_code_mapping IS NOT NULL  
+        AND f.promo_code_mapping != 'No code'  
+),
+
+CLIENTES_SIN_DESCUENTO_POSTERIOR AS (
+    -- Filtrar clientes que nunca volvieron a usar un promo_code_mapping después del primer pedido
+    SELECT DISTINCT 
+        p.customer_id,
+        p.product_type
+    FROM PRIMER_PEDIDO_CON_DESCUENTO p
+    LEFT JOIN USO_DESCUENTO_POSTERIOR u 
+        ON p.customer_id = u.customer_id
+    WHERE u.customer_id IS NULL
+),
+
+ORDENES_POR_CLIENTE AS (
+    -- Contar el total de pedidos únicos de estos clientes
+    SELECT 
+        p.customer_id,
+        p.product_type,
+        COUNT(DISTINCT f.order_id) AS total_orders,
+        CASE WHEN c.customer_id IS NOT NULL THEN 1 ELSE 0 END AS sin_descuento_post
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p
+        ON f.customer_id = p.customer_id
+    LEFT JOIN CLIENTES_SIN_DESCUENTO_POSTERIOR c
+        ON f.customer_id = c.customer_id
+    WHERE 
+        f.sale_type = 'order' 
+        AND f.transaction_type = 'product'
+        AND f.customer_id IS NOT NULL
+    GROUP BY p.customer_id, p.product_type, c.customer_id
+),
+
+-- Distribución de clientes según número de pedidos y tipo de producto
+TABLA_FINAL AS (SELECT 
+    product_type,
+    CASE 
+        WHEN total_orders = 1 THEN '1 pedido'
+        WHEN total_orders = 2 THEN '2 pedidos'
+        ELSE 'Más de 2 pedidos'
+    END AS categoria_pedidos,
+    COUNT(DISTINCT customer_id) AS total_clientes_primer_pedido,
+    COUNT(DISTINCT CASE WHEN sin_descuento_post = 1 THEN customer_id END) AS total_clientes_sin_descuento_post,
+    ROUND((COUNT(DISTINCT CASE WHEN sin_descuento_post = 1 THEN customer_id END) * 100.0) / NULLIF(COUNT(DISTINCT customer_id), 0), 2) AS porcentaje_sin_descuento
+FROM ORDENES_POR_CLIENTE
+--where product_type in ('Monthly Subs','One-Time','Quarterly Subs')
+GROUP BY product_type, categoria_pedidos
+ORDER BY product_type, categoria_pedidos)
+
+SELECT * FROM TABLA_FINAL; --WHERE CATEGORIA_PEDIDOS NOT IN ('1 pedido');
+
+
+
+
+----
+
+select count(distinct customer_id) from fct_sales WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024
+        and customer_id is not null
+        AND product_type in ('One-Time')
+        AND sale_type = 'order'
+        AND transaction_type = 'product'
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code';
+
+----
+
+
+
+WITH PRIMER_PEDIDO_CON_DESCUENTO AS (
+    -- Clientes que usaron un descuento en su primer pedido en 2024
+    SELECT DISTINCT
+        customer_id,
+        product_type
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024
+        AND sale_type = 'order'
+        AND transaction_type = 'product'
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+),
+
+NUMERO_PEDIDOS AS (
+    -- Contar el total de pedidos únicos por cliente
+    SELECT 
+        customer_id,
+        product_type,
+        COUNT(DISTINCT order_id) AS total_orders
+    FROM fct_sales
+    WHERE 
+        sale_type = 'order' 
+        AND transaction_type = 'product'
+        AND customer_id IS NOT NULL
+    GROUP BY customer_id, product_type
+),
+
+DISTRIBUCION_CLIENTES AS (
+    -- Filtrar clientes que usaron un descuento en su primer pedido y clasificar por número de pedidos y tipo de producto
+    SELECT 
+        n.customer_id,
+        n.product_type,
+        CASE 
+            WHEN n.total_orders = 1 THEN '1 pedido'
+            WHEN n.total_orders = 2 THEN '2 pedidos'
+            ELSE 'Más de 2 pedidos'
+        END AS categoria_pedidos
+    FROM NUMERO_PEDIDOS n
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p
+        ON n.customer_id = p.customer_id
+        AND n.product_type = p.product_type
+)
+
+-- Contar clientes por categoría de número de pedidos y product_type
+SELECT 
+    product_type,
+    categoria_pedidos,
+    COUNT(DISTINCT customer_id) AS total_clientes
+FROM DISTRIBUCION_CLIENTES
+GROUP BY product_type, categoria_pedidos
+ORDER BY product_type, categoria_pedidos;
+
+
+
+
+
+WITH PRIMER_PEDIDO_CON_DESCUENTO AS (
+    -- Clientes que usaron un descuento en su primer pedido en 2024
+    SELECT DISTINCT
+        customer_id,
+        product_type
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024
+        AND sale_type = 'order'
+        AND transaction_type = 'product'
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+),
+
+NUMERO_PEDIDOS AS (
+    -- Contar el total de pedidos únicos por cliente
+    SELECT 
+        customer_id,
+        product_type,
+        COUNT(DISTINCT order_id) AS total_orders
+    FROM fct_sales
+    WHERE 
+        sale_type = 'order' 
+        AND transaction_type = 'product'
+        AND customer_id IS NOT NULL
+    GROUP BY customer_id, product_type
+),
+
+CLIENTES_SIN_DESCUENTO_POSTERIOR AS (
+    -- Clientes que NUNCA volvieron a usar un descuento después del primer pedido
+    SELECT DISTINCT 
+        p.customer_id,
+        p.product_type
+    FROM PRIMER_PEDIDO_CON_DESCUENTO p
+    LEFT JOIN fct_sales f 
+        ON p.customer_id = f.customer_id
+        AND f.customer_order_number > 1  -- Solo pedidos después del primero
+        AND f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+        AND f.promo_code_mapping IS NOT NULL  
+        AND f.promo_code_mapping != 'No code'  -- Si ha usado un descuento después del primer pedido
+    WHERE f.customer_id IS NULL  -- Nos quedamos con los clientes que no aparecen en la tabla de descuentos posteriores
+),
+
+DISTRIBUCION_CLIENTES AS (
+    -- Clasificamos clientes según la cantidad de pedidos totales y tipo de producto
+    SELECT 
+        n.customer_id,
+        n.product_type,
+        CASE 
+            WHEN n.total_orders = 1 THEN '1 pedido'
+            WHEN n.total_orders = 2 THEN '2 pedidos'
+            ELSE 'Más de 2 pedidos'
+        END AS categoria_pedidos
+    FROM NUMERO_PEDIDOS n
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p
+        ON n.customer_id = p.customer_id
+        AND n.product_type = p.product_type
+)
+
+-- Contar clientes por categoría de número de pedidos, product_type y los que no volvieron a usar descuentos
+SELECT 
+    d.product_type,
+    d.categoria_pedidos,
+    COUNT(DISTINCT d.customer_id) AS total_clientes,
+    COUNT(DISTINCT c.customer_id) AS clientes_sin_descuento_post
+FROM DISTRIBUCION_CLIENTES d
+LEFT JOIN CLIENTES_SIN_DESCUENTO_POSTERIOR c
+    ON d.customer_id = c.customer_id
+    AND d.product_type = c.product_type
+GROUP BY d.product_type, d.categoria_pedidos
+ORDER BY d.product_type, d.categoria_pedidos;
+
+
+
+
+
+
+
+
+--> ¿Cuántos usan un descuento en su segundo pedido habiendo usado uno en su primer pedido? (AÑO 2024) 
+WITH PRIMER_PEDIDO_CON_DESCUENTO AS (
+    -- Identificar clientes que usaron un descuento en su primer pedido en 2024
+    SELECT DISTINCT
+        customer_id
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024 
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+),
+
+SEGUNDO_PEDIDO AS (
+    -- Identificar clientes que hicieron un segundo pedido después de haber usado descuento en el primero
+    SELECT DISTINCT 
+        f.customer_id
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p ON f.customer_id = p.customer_id
+    WHERE 
+        f.customer_order_number = 2
+        AND f.sale_type = 'order' 
+        AND f.transaction_type = 'product'
+),
+
+SEGUNDO_PEDIDO_CON_DESCUENTO AS (
+    -- Filtrar clientes que usaron un descuento en su segundo pedido
+    SELECT DISTINCT 
+        f.customer_id
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p ON f.customer_id = p.customer_id
+    WHERE 
+        f.customer_order_number = 2
+        AND f.sale_type = 'order' 
+        AND f.transaction_type = 'product'
+        AND f.promo_code_mapping IS NOT NULL 
+        AND f.promo_code_mapping != 'No code'
+)
+
+SELECT 
+    COUNT(DISTINCT s.customer_id) AS total_clientes_con_segundo_pedido,
+    COUNT(DISTINCT d.customer_id) AS clientes_con_descuento_en_segundo_pedido,
+    ROUND(100.0 * COUNT(DISTINCT d.customer_id) / COUNT(DISTINCT s.customer_id), 2) AS porcentaje_con_descuento
+FROM SEGUNDO_PEDIDO s
+LEFT JOIN SEGUNDO_PEDIDO_CON_DESCUENTO d 
+    ON s.customer_id = d.customer_id;
+
+
+
+--> ¿Cómo se distribuyen los clientes en base al número de pedidos y al % de pedidos en los que usan un descuento? 
+WITH CLIENTES_CON_DESCUENTO_PRIMER_PEDIDO AS (
+    -- Clientes que usaron un descuento en su primer pedido
+    SELECT DISTINCT customer_id
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024 
+        AND sale_type = 'order'
+        AND transaction_type = 'product'
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+),
+
+ORDENES_CLIENTES AS (
+    -- Contamos cuántos pedidos ha hecho cada cliente y cuántos han sido con descuento
+    SELECT 
+        f.customer_id,
+        COUNT(DISTINCT f.order_id) AS total_orders,
+        COUNT(DISTINCT CASE WHEN f.promo_code_mapping IS NOT NULL AND f.promo_code_mapping != 'No code' 
+            THEN f.order_id END) AS orders_with_discount
+    FROM fct_sales f
+    INNER JOIN CLIENTES_CON_DESCUENTO_PRIMER_PEDIDO c
+        ON f.customer_id = c.customer_id
+    WHERE 
+        f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+    GROUP BY f.customer_id
+),
+
+DISTRIBUCION_CLIENTES AS (
+    -- Calculamos el porcentaje de pedidos con descuento y los agrupamos en categorías
+    SELECT 
+        customer_id,
+        total_orders,
+        orders_with_discount,
+        ROUND((orders_with_discount * 100.0) / total_orders, 2) AS discount_percentage,
+        CASE 
+            WHEN total_orders = 1 THEN '1 pedido'
+            WHEN total_orders = 2 THEN '2 pedidos'
+            ELSE 'Más de 2 pedidos'
+        END AS category_orders,
+        CASE 
+            --WHEN (orders_with_discount * 100.0) / total_orders = 0 THEN '0% de pedidos con descuento'
+            WHEN (orders_with_discount * 100.0) / total_orders BETWEEN 1 AND 49 THEN 'Menos del 50%'
+            WHEN (orders_with_discount * 100.0) / total_orders = 50 THEN '50%'
+            WHEN (orders_with_discount * 100.0) / total_orders BETWEEN 51 AND 99 THEN 'Más del 50%'
+            ELSE '100% de pedidos con descuento'
+        END AS porcentaje_pedidos_descuento
+    FROM ORDENES_CLIENTES
+),
+
+TOTAL_CLIENTES AS (
+    -- Contar el total de clientes para calcular los porcentajes
+    SELECT COUNT(DISTINCT customer_id) AS total_clientes_total
+    FROM DISTRIBUCION_CLIENTES
+)
+
+SELECT 
+    d.category_orders,
+    d.porcentaje_pedidos_descuento,
+    COUNT(DISTINCT d.customer_id) AS total_clientes,
+    ROUND((COUNT(DISTINCT d.customer_id) * 100.0) / t.total_clientes_total, 2) AS porcentaje_clientes
+FROM DISTRIBUCION_CLIENTES d
+CROSS JOIN TOTAL_CLIENTES t
+GROUP BY d.category_orders, d.porcentaje_pedidos_descuento, t.total_clientes_total
+ORDER BY d.category_orders, d.porcentaje_pedidos_descuento;
+
+
+
+
+--- Por grupos de descuentos de primer pedido, ¿cómo es su recurrencia en los siguientes 12 meses? Separar por modelos
+WITH PRIMER_PEDIDO AS (
+    -- Seleccionar clientes con su primer pedido en 2024 y el primer código de descuento usado
+    SELECT DISTINCT 
+        customer_id,
+        first_promo_code_mapping AS grupo_descuento,
+        product_type,
+        date_first_order_customer
+    FROM fct_sales
+    WHERE customer_order_number = 1
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+        AND YEAR(date_first_order_customer) = 2024 -- Solo clientes con primer pedido en 2024
+),
+
+ORDENES_CLIENTES AS (
+    -- Contar cuántos pedidos hicieron los clientes en los siguientes 12 meses desde su primer pedido
+    SELECT 
+        f.customer_id,
+        p.grupo_descuento,
+        p.product_type,
+        COUNT(DISTINCT f.order_id) AS total_orders
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO p 
+        ON f.customer_id = p.customer_id
+    WHERE 
+        f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+        AND TIMESTAMPDIFF(MONTH, p.date_first_order_customer, f.date) <= 12  -- Solo pedidos en los primeros 12 meses
+    GROUP BY f.customer_id, p.grupo_descuento, p.product_type
+),
+
+DISTRIBUCION AS (
+    -- Asignar cohortes anuales y agrupar por grupo de descuento y tipo de producto
+    SELECT 
+        p.customer_id,
+        YEAR(p.date_first_order_customer) AS cohort_year,
+        p.grupo_descuento,
+        p.product_type,
+        o.total_orders AS pedidos_12_meses  -- Total de pedidos en 12 meses
+    FROM ORDENES_CLIENTES o
+    INNER JOIN PRIMER_PEDIDO p 
+        ON o.customer_id = p.customer_id
+)
+
+-- Agregación final con conteo de clientes y promedio de pedidos en 12 meses
+SELECT 
+    cohort_year,
+    grupo_descuento,
+    product_type,
+    COUNT(DISTINCT customer_id) AS total_clientes,
+    ROUND(COALESCE(AVG(pedidos_12_meses), 0), 2) AS pedidos_promedio_12_meses
+FROM DISTRIBUCION
+WHERE cohort_year = 2024 AND product_type IS NOT NULL
+GROUP BY cohort_year, grupo_descuento, product_type
+ORDER BY cohort_year, product_type, total_clientes DESC;
+
+
+
+
+
+
+---CLV (primera compra 2024)
+
+
+WITH PRIMER_PEDIDO_CON_DESCUENTO AS (
+    -- Clientes que usaron un descuento en su primer pedido en 2024
+    SELECT DISTINCT
+        customer_id
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024 
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+),
+
+VENTAS_CLIENTES AS (
+    -- Calculamos el total de ventas y el número de pedidos por cliente
+    SELECT 
+        f.customer_id,
+        f.first_promo_code_mapping,
+        COUNT(DISTINCT f.order_id) AS total_pedidos,
+        SUM(f.net_sales) AS total_gasto,
+        MIN(f.date) AS primera_compra,
+        MAX(f.date) AS ultima_compra,
+        TIMESTAMPDIFF(MONTH, MIN(f.date), MAX(f.date)) AS duracion_cliente
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p ON f.customer_id = p.customer_id
+    WHERE f.sale_type = 'order' 
+        AND f.transaction_type = 'product'
+    GROUP BY f.customer_id, f.first_promo_code_mapping
+),
+
+CALCULO_CLV AS (
+    -- Calculamos el CLV agregando los datos por grupo de descuento
+    SELECT 
+        first_promo_code_mapping,
+        COUNT(DISTINCT customer_id) AS total_clientes,
+        SUM(total_gasto) / COUNT(DISTINCT customer_id) AS gasto_promedio_por_cliente,
+        SUM(total_gasto) / SUM(total_pedidos) AS gasto_promedio_por_pedido,
+        SUM(total_pedidos) / COUNT(DISTINCT customer_id) AS frecuencia_compra,
+        AVG(duracion_cliente) AS duracion_promedio_cliente,
+        -- Cálculo del CLV usando la fórmula
+        (SUM(total_gasto) / SUM(total_pedidos)) * (SUM(total_pedidos) / COUNT(DISTINCT customer_id)) * AVG(duracion_cliente) AS CLV
+    FROM VENTAS_CLIENTES
+    GROUP BY first_promo_code_mapping
+)
+
+SELECT 
+    first_promo_code_mapping,
+    total_clientes,
+    CLV
+FROM CALCULO_CLV
+ORDER BY CLV DESC;
+
+
+--- CLV sin descuento primer pedido
+WITH PRIMER_PEDIDO_SIN_DESCUENTO AS (
+    -- Clientes que NO usaron un descuento en su primer pedido en 2024
+    SELECT DISTINCT
+        customer_id
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024 
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND (first_promo_code_mapping IS NULL OR first_promo_code_mapping = 'No code') -- Sin descuento
+),
+
+VENTAS_CLIENTES AS (
+    -- Calculamos el total de ventas y el número de pedidos por cliente
+    SELECT 
+        f.customer_id,
+        COUNT(DISTINCT f.order_id) AS total_pedidos,
+        SUM(f.net_sales) AS total_gasto,
+        MIN(f.date) AS primera_compra,
+        MAX(f.date) AS ultima_compra,
+        TIMESTAMPDIFF(MONTH, MIN(f.date), MAX(f.date)) AS duracion_cliente
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_SIN_DESCUENTO p ON f.customer_id = p.customer_id
+    WHERE f.sale_type = 'order' 
+        AND f.transaction_type = 'product'
+    GROUP BY f.customer_id
+),
+
+CALCULO_CLV AS (
+    -- Calculamos el CLV agregando los datos
+    SELECT 
+        COUNT(DISTINCT customer_id) AS total_clientes,
+        SUM(total_gasto) / COUNT(DISTINCT customer_id) AS gasto_promedio_por_cliente,
+        SUM(total_gasto) / SUM(total_pedidos) AS gasto_promedio_por_pedido,
+        SUM(total_pedidos) / COUNT(DISTINCT customer_id) AS frecuencia_compra,
+        AVG(duracion_cliente) AS duracion_promedio_cliente,
+        -- Cálculo del CLV usando la fórmula
+        (SUM(total_gasto) / SUM(total_pedidos)) * (SUM(total_pedidos) / COUNT(DISTINCT customer_id)) * AVG(duracion_cliente) AS CLV
+    FROM VENTAS_CLIENTES
+)
+
+SELECT 
+    total_clientes,
+    CLV
+FROM CALCULO_CLV;
+
+
+
+
+
+--- CLV por product_type
+WITH PRIMER_PEDIDO_CON_DESCUENTO AS (
+    -- Clientes que usaron un descuento en su primer pedido en 2024
+    SELECT DISTINCT
+        customer_id
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024 
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+),
+
+VENTAS_CLIENTES AS (
+    -- Calculamos el total de ventas y el número de pedidos por cliente, diferenciando por tipo de suscripción
+    SELECT 
+        f.customer_id,
+        f.first_promo_code_mapping,
+        f.product_type,  -- Tipo de suscripción: Mensual, Trimestral, One-Time
+        COUNT(DISTINCT f.order_id) AS total_pedidos,
+        SUM(f.net_sales) AS total_gasto,
+        MIN(f.date) AS primera_compra,
+        MAX(f.date) AS ultima_compra,
+        TIMESTAMPDIFF(MONTH, MIN(f.date), MAX(f.date)) AS duracion_cliente
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p ON f.customer_id = p.customer_id
+    WHERE f.sale_type = 'order' 
+        AND f.transaction_type = 'product'
+    GROUP BY f.customer_id, f.first_promo_code_mapping, f.product_type
+),
+
+CALCULO_CLV AS (
+    -- Calculamos el CLV agregando los datos por tipo de suscripción
+    SELECT 
+        product_type,  -- Agrupamos por tipo de suscripción
+        COUNT(DISTINCT customer_id) AS total_clientes,
+        SUM(total_gasto) / COUNT(DISTINCT customer_id) AS gasto_promedio_por_cliente,
+        SUM(total_gasto) / SUM(total_pedidos) AS gasto_promedio_por_pedido,
+        SUM(total_pedidos) / COUNT(DISTINCT customer_id) AS frecuencia_compra,
+        AVG(duracion_cliente) AS duracion_promedio_cliente,
+        -- Cálculo del CLV usando la fórmula
+        (SUM(total_gasto) / SUM(total_pedidos)) * (SUM(total_pedidos) / COUNT(DISTINCT customer_id)) * AVG(duracion_cliente) AS CLV
+    FROM VENTAS_CLIENTES
+    GROUP BY product_type
+)
+
+SELECT 
+    product_type,
+    total_clientes,
+    ROUND(CLV,2) AS CLV
+FROM CALCULO_CLV
+ORDER BY CLV DESC;
+
+
+--Tasa de conversion
+WITH PRIMER_PEDIDO_CON_DESCUENTO AS (
+    -- Identificar clientes que usaron un descuento en su primer pedido en 2024
+    SELECT DISTINCT
+        customer_id,
+        first_promo_code_mapping
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+),
+
+CLIENTES_RECURRENTES AS (
+    -- Filtrar clientes que hicieron más de un pedido
+    SELECT 
+        f.customer_id,
+        p.first_promo_code_mapping
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p 
+        ON f.customer_id = p.customer_id
+    WHERE 
+        f.customer_order_number > 1 -- Pedidos posteriores al primero
+        AND f.sale_type = 'order' 
+        AND f.transaction_type = 'product'
+    GROUP BY f.customer_id, p.first_promo_code_mapping
+),
+
+TASA_CONVERSION AS (
+    -- Calcular la tasa de conversión por grupo de descuento
+    SELECT 
+        p.first_promo_code_mapping,
+        COUNT(DISTINCT p.customer_id) AS total_clientes_primer_pedido_descuento,
+        COUNT(DISTINCT c.customer_id) AS clientes_recurrentes,
+        ROUND(100.0 * COUNT(DISTINCT c.customer_id) / COUNT(DISTINCT p.customer_id), 2) AS tasa_recurrencia
+    FROM PRIMER_PEDIDO_CON_DESCUENTO p
+    LEFT JOIN CLIENTES_RECURRENTES c 
+        ON p.customer_id = c.customer_id
+    GROUP BY p.first_promo_code_mapping
+)
+
+SELECT * FROM TASA_CONVERSION
+ORDER BY tasa_recurrencia DESC;
+
+
+-- Tasa de conversion product_type
+WITH PRIMER_PEDIDO_CON_DESCUENTO AS (
+    -- Identificar clientes que usaron un descuento en su primer pedido en 2024
+    SELECT DISTINCT
+        customer_id,
+        first_promo_code_mapping,
+        product_type
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+),
+
+CLIENTES_RECURRENTES AS (
+    -- Filtrar clientes que hicieron más de un pedido
+    SELECT 
+        f.customer_id,
+        p.first_promo_code_mapping,
+        p.product_type
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_CON_DESCUENTO p 
+        ON f.customer_id = p.customer_id
+    WHERE 
+        f.customer_order_number > 1 -- Pedidos posteriores al primero
+        AND f.sale_type = 'order' 
+        AND f.transaction_type = 'product'
+    GROUP BY f.customer_id, p.first_promo_code_mapping, p.product_type
+),
+
+TASA_CONVERSION AS (
+    -- Calcular la tasa de conversión por grupo de descuento y tipo de producto
+    SELECT 
+        p.first_promo_code_mapping,
+        p.product_type,
+        COUNT(DISTINCT p.customer_id) AS total_clientes_primer_pedido_descuento,
+        COUNT(DISTINCT c.customer_id) AS clientes_recurrentes,
+        ROUND(100.0 * COUNT(DISTINCT c.customer_id) / COUNT(DISTINCT p.customer_id), 2) AS tasa_recurrencia
+    FROM PRIMER_PEDIDO_CON_DESCUENTO p
+    LEFT JOIN CLIENTES_RECURRENTES c 
+        ON p.customer_id = c.customer_id
+        AND p.product_type = c.product_type -- Asegurar que es el mismo tipo de producto
+    GROUP BY p.first_promo_code_mapping, p.product_type
+)
+
+SELECT * FROM TASA_CONVERSION
+ORDER BY tasa_recurrencia DESC;
+
+
+
+
+
+--- ANALISIS FINANCIERO
+---Calcula el % de descuento medio aplicado a cada first_promo_code_mapping.
+WITH PRIMER_PEDIDO_2024 AS (
+    -- Seleccionar clientes que hicieron su primer pedido en 2024
+    SELECT DISTINCT
+        customer_id
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024
+        AND sale_type = 'order'
+        AND transaction_type = 'product'
+),
+
+PORCENTAJE_DESCUENTO AS (
+    -- Calcular el porcentaje de descuento por grupo de descuento
+    SELECT 
+        first_promo_code_mapping,
+        ROUND(AVG(CASE 
+            WHEN gross_sales > 0 THEN (discounts / gross_sales) * 100 
+            ELSE 0 
+        END), 2) AS porcentaje_descuento_promedio
+    FROM fct_sales
+    WHERE 
+        sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL
+    GROUP BY first_promo_code_mapping
+),
+
+INGRESOS_CLIENTES AS (
+    -- Calcular ingresos totales de clientes que usaron un descuento en su primer pedido en 2024
+    SELECT 
+        f.first_promo_code_mapping,
+        SUM(f.net_sales) AS ingresos_totales,
+        COUNT(DISTINCT f.customer_id) AS total_clientes
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_2024 p
+        ON f.customer_id = p.customer_id
+    INNER JOIN PORCENTAJE_DESCUENTO d
+        ON f.first_promo_code_mapping = d.first_promo_code_mapping
+    WHERE 
+        f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+    GROUP BY f.first_promo_code_mapping
+),
+
+INGRESOS_CLIENTES_SIN_DESCUENTO AS (
+    -- Calcular ingresos generados por clientes que NO usaron descuento en su primer pedido en 2024
+    SELECT 
+        SUM(f.net_sales) AS ingresos_totales_sin_descuento,
+        COUNT(DISTINCT f.customer_id) AS total_clientes_sin_descuento
+    FROM fct_sales f
+    INNER JOIN PRIMER_PEDIDO_2024 p
+        ON f.customer_id = p.customer_id
+    WHERE 
+        f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+        AND f.first_promo_code_mapping = 'No code'
+)
+
+SELECT 
+    i.first_promo_code_mapping,
+    d.porcentaje_descuento_promedio,
+    i.ingresos_totales,
+    s.ingresos_totales_sin_descuento,
+    (i.ingresos_totales - (i.ingresos_totales * (d.porcentaje_descuento_promedio / 100))) AS ingresos_neto_post_descuento,
+    ROUND(100 * (i.ingresos_totales - (i.ingresos_totales * (d.porcentaje_descuento_promedio / 100))) / NULLIF(i.ingresos_totales, 0), 2) AS margen_neto
+FROM INGRESOS_CLIENTES i
+LEFT JOIN PORCENTAJE_DESCUENTO d 
+    ON i.first_promo_code_mapping = d.first_promo_code_mapping
+LEFT JOIN INGRESOS_CLIENTES_SIN_DESCUENTO s
+    ON 1=1  -- Un solo registro con los ingresos sin descuento
+ORDER BY margen_neto DESC;
+
+
+
+----PRUEBA
+    -- Calcular el porcentaje de descuento por grupo de descuento
+    SELECT 
+        first_promo_code_mapping,
+        ROUND(AVG(CASE 
+            WHEN gross_sales > 0 THEN (discounts / gross_sales) * 100 
+            ELSE 0 
+        END), 0) AS porcentaje_descuento_promedio,
+        SUM(NET_SALES) AS TOTAL_NET_SALES,
+        count(distinct customer_id) as total_clientes
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date_first_order_customer) = 2024
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL
+    GROUP BY first_promo_code_mapping
+    order by total_clientes desc;
+
+
+---IMPACTO NET SALES
+WITH CLIENTES_CON_PRIMER_PEDIDO AS (
+    -- Asegurar que contamos todos los clientes que hicieron su primer pedido con descuento en 2024
+    SELECT DISTINCT 
+        customer_id, 
+        first_promo_code_mapping,
+        MIN(date) AS date_first_order_customer  -- Obtener la fecha de su primer pedido
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date) = 2024  -- Filtrar por clientes cuyo primer pedido fue en 2024
+        AND sale_type = 'order' 
+        AND transaction_type = 'product'
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+    GROUP BY customer_id, first_promo_code_mapping
+),
+
+TOTAL_CLIENTES AS (
+    -- Calcular el número total de clientes desde su primera compra
+    SELECT 
+        first_promo_code_mapping,
+        COUNT(DISTINCT customer_id) AS total_clientes
+    FROM CLIENTES_CON_PRIMER_PEDIDO
+    GROUP BY first_promo_code_mapping
+),
+
+VENTAS_POSTERIORES AS (
+    -- Calcular net_sales de los siguientes 12 meses después del primer pedido
+    SELECT 
+        f.customer_id,
+        p.first_promo_code_mapping,
+        SUM(f.net_sales) AS net_sales_12m
+    FROM fct_sales f
+    INNER JOIN CLIENTES_CON_PRIMER_PEDIDO p 
+        ON f.customer_id = p.customer_id
+    WHERE 
+        f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+        AND TIMESTAMPDIFF(MONTH, p.date_first_order_customer, f.date) BETWEEN 1 AND 12
+    GROUP BY f.customer_id, p.first_promo_code_mapping
+),
+
+DESCUENTOS_PROMEDIO AS (
+    -- Calcular el porcentaje promedio de descuento en el primer pedido por grupo de descuento
+    SELECT 
+        first_promo_code_mapping,
+        ROUND(AVG(CASE 
+            WHEN gross_sales > 0 THEN (discounts / gross_sales) * 100 
+            ELSE 0 
+        END), 0) AS porcentaje_descuento_promedio
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date) = 2024
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL
+    GROUP BY first_promo_code_mapping
+),
+
+TABLA_FINAL AS (
+    -- Incluir clientes aunque no hayan comprado en los 12 meses posteriores
+    SELECT 
+        t.first_promo_code_mapping,
+        t.total_clientes,  -- Se mantiene el total de clientes desde el inicio
+        COALESCE(SUM(v.net_sales_12m), 0) AS total_net_sales_12m,
+        ROUND(COALESCE(SUM(v.net_sales_12m), 0) / NULLIF(t.total_clientes, 0), 2) AS avg_net_sales_per_customer,
+        d.porcentaje_descuento_promedio  -- Se añade el porcentaje de descuento promedio
+    FROM TOTAL_CLIENTES t
+    LEFT JOIN VENTAS_POSTERIORES v
+        ON t.first_promo_code_mapping = v.first_promo_code_mapping
+    LEFT JOIN DESCUENTOS_PROMEDIO d
+        ON t.first_promo_code_mapping = d.first_promo_code_mapping
+    GROUP BY t.first_promo_code_mapping, t.total_clientes, d.porcentaje_descuento_promedio
+)
+
+SELECT * 
+FROM TABLA_FINAL 
+WHERE total_clientes > 100
+ORDER BY total_clientes DESC;
+
+----
+WITH CLIENTES_CON_PRIMER_PEDIDO AS (
+    -- Asegurar que contamos todos los clientes que hicieron su primer pedido con descuento en 2024
+    SELECT DISTINCT 
+        customer_id, 
+        first_promo_code_mapping,
+        product_type,
+        MIN(date) AS date_first_order_customer  -- Obtener la fecha de su primer pedido
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date) = 2024  -- Filtrar por clientes cuyo primer pedido fue en 2024
+        AND sale_type = 'order' 
+        AND transaction_type = 'product'
+        AND first_promo_code_mapping IS NOT NULL 
+        AND first_promo_code_mapping != 'No code'
+    GROUP BY customer_id, first_promo_code_mapping, product_type
+),
+
+TOTAL_CLIENTES AS (
+    -- Calcular el número total de clientes desde su primera compra por grupo de descuento y tipo de producto
+    SELECT 
+        first_promo_code_mapping,
+        product_type,
+        COUNT(DISTINCT customer_id) AS total_clientes
+    FROM CLIENTES_CON_PRIMER_PEDIDO
+    GROUP BY first_promo_code_mapping, product_type
+),
+
+VENTAS_POSTERIORES AS (
+    -- Calcular net_sales de los siguientes 12 meses después del primer pedido por grupo de descuento y tipo de producto
+    SELECT 
+        f.customer_id,
+        p.first_promo_code_mapping,
+        p.product_type,
+        SUM(f.net_sales) AS net_sales_12m
+    FROM fct_sales f
+    INNER JOIN CLIENTES_CON_PRIMER_PEDIDO p 
+        ON f.customer_id = p.customer_id
+    WHERE 
+        f.sale_type = 'order'
+        AND f.transaction_type = 'product'
+        AND TIMESTAMPDIFF(MONTH, p.date_first_order_customer, f.date) BETWEEN 1 AND 12
+    GROUP BY f.customer_id, p.first_promo_code_mapping, p.product_type
+),
+
+DESCUENTOS_PROMEDIO AS (
+    -- Calcular el porcentaje promedio de descuento en el primer pedido por grupo de descuento y tipo de producto
+    SELECT 
+        first_promo_code_mapping,
+        product_type,
+        ROUND(AVG(CASE 
+            WHEN gross_sales > 0 THEN (discounts / gross_sales) * 100 
+            ELSE 0 
+        END), 0) AS porcentaje_descuento_promedio
+    FROM fct_sales
+    WHERE 
+        customer_order_number = 1
+        AND YEAR(date) = 2024
+        AND sale_type = 'order' 
+        AND transaction_type = 'product' 
+        AND first_promo_code_mapping IS NOT NULL
+    GROUP BY first_promo_code_mapping, product_type
+),
+
+TABLA_FINAL AS (
+    -- Incluir clientes aunque no hayan comprado en los 12 meses posteriores
+    SELECT 
+        t.first_promo_code_mapping,
+        t.product_type,
+        t.total_clientes,  -- Se mantiene el total de clientes desde el inicio
+        COALESCE(SUM(v.net_sales_12m), 0) AS total_net_sales_12m,
+        ROUND(COALESCE(SUM(v.net_sales_12m), 0) / NULLIF(t.total_clientes, 0), 2) AS avg_net_sales_per_customer,
+        d.porcentaje_descuento_promedio  -- Se añade el porcentaje de descuento promedio
+    FROM TOTAL_CLIENTES t
+    LEFT JOIN VENTAS_POSTERIORES v
+        ON t.first_promo_code_mapping = v.first_promo_code_mapping
+        AND t.product_type = v.product_type
+    LEFT JOIN DESCUENTOS_PROMEDIO d
+        ON t.first_promo_code_mapping = d.first_promo_code_mapping
+        AND t.product_type = d.product_type
+    GROUP BY t.first_promo_code_mapping, t.product_type, t.total_clientes, d.porcentaje_descuento_promedio
+)
+
+SELECT * 
+FROM TABLA_FINAL 
+WHERE total_clientes > 100
+ORDER BY product_type, total_clientes DESC;
+
+
+
+
+
+---
+
+
+
+
+---Margen Neto
+WITH COSTOS_INGRESOS AS (
+    SELECT 
+        starting_promo_code_mapping,
+        COUNT(DISTINCT customer_id) AS total_clientes, -- Número de clientes que usaron el descuento
+        SUM(net_sales) AS total_net_sales, -- Ingresos totales después de descuentos
+        SUM(total_cost) AS total_costs, -- Costos totales (producto + envío)
+        SUM(discounts) AS total_discounts -- Total de descuentos aplicados
+    FROM fct_cohorts_purchases
+    WHERE  
+        order_has_occured = 1 
+        AND YEAR(customer_first_order_date) = 2024 -- Solo clientes cuyo primer pedido fue en 2024
+        AND starting_promo_code_mapping IS NOT NULL
+        --AND starting_promo_code_mapping != 'No code'-- Solo clientes con un código de descuento
+    GROUP BY starting_promo_code_mapping
+)
+
+SELECT 
+    starting_promo_code_mapping,
+    total_clientes,
+    total_net_sales,
+    round(total_costs,2) as total_costs,
+    ROUND((total_net_sales - total_costs) / NULLIF(total_net_sales, 0) * 100, 2) AS margen_beneficio_neto
+FROM COSTOS_INGRESOS
+where total_clientes > 100
+ORDER BY margen_beneficio_neto DESC;
+
+
+
+
+
+
+--select order_id,discounts, starting_promo_code_mapping from fct_cohorts_purchases where starting_promo_code_mapping='No code' 
+---and order_has_occured = 1 AND YEAR(customer_first_order_date) = 2024;
+
+
+
+
+
