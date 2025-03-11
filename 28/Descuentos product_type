@@ -1,0 +1,605 @@
+---DESCUENTOS SHOPIFY FIRST- TIME
+
+--ADQUSICIONES
+with tabla1 as(
+select date_trunc('month', date) AS fecha, count(distinct order_id) as total_clientes
+from fct_sales 
+where sale_type='order' and transaction_type='product' and product_type is not null and YEAR(fecha) = 2024 AND main_channel='Shopify' and recurrency_type='First-time' and first_promo_code_mapping='Influencer Organic'
+group by fecha)
+select ROUND(AVG(total_clientes),2) FROM tabla1;
+
+
+--- Sin bajada de clientes, reduccion del descuento del 20 al 15% y reducimos el fee de las influencers del 20% al 15%
+
+SELECT 
+    date_trunc('month', DATE) AS fecha,
+    first_promo_code_mapping,
+
+    -- Valores reales
+    COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END) AS actual_total_clientes,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns),2) AS actual_net_sales,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.20, 2) AS actual_fees,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.80, 2) AS actual_facturado,
+    
+    -- Valores ajustados (simulación con el nuevo descuento y pérdida de clientes)
+    ROUND(COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END) * 1,0) AS total_clientes_ajustados,
+
+    -- Ticket promedio ajustado (ventas netas ajustadas por cliente real)
+    ROUND(
+        (SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END), 2
+    ) AS ticket_promedio_ajustado,
+
+    -- Total de net sales ajustadas 
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END) * 1), 2
+    ) AS net_sales_ajustados,
+
+
+    -- Total facturado ajustado con el nuevo descuento
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END) * 1) * 0.85, 2
+    ) AS facturado_ajustado,
+
+    -- Incremento porcentual de actual_net_sales a total_net_sales_ajustados
+    ROUND(
+        (((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END) * 1) 
+        - SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns)) 
+        / SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns)*100, 4
+    ) AS incremento_porcentual_net_sales,
+
+    -- Incremento porcentual del total facturado (nuevo cálculo)
+    ROUND(
+        (facturado_ajustado - actual_facturado) / actual_facturado * 100, 2
+    ) AS incremento_porcentual_facturado
+
+
+FROM fct_sales
+WHERE recurrency_type = 'First-time'
+    AND first_promo_code_mapping IN ('Influencer Organic') and main_channel='Shopify'
+    AND YEAR(DATE) = 2024
+
+GROUP BY fecha, first_promo_code_mapping
+ORDER BY fecha, first_promo_code_mapping;
+
+select distinct recurrency_type from fct_sales where main_channel='Amazon Seller';
+
+
+
+
+
+--- Con bajada de clientes, reduccion del descuento del 20 al 15% y reducimos el fee de las influencers del 20% al 15%
+
+
+SELECT 
+    date_trunc('month', DATE) AS fecha,
+    first_promo_code_mapping,
+
+    -- Valores reales
+    COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END) AS actual_total_clientes,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns),2) AS actual_net_sales,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.20, 2) AS actual_fees,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.80, 2) AS actual_facturado,
+    
+    -- Valores ajustados (simulación con el nuevo descuento y pérdida de clientes)
+    ROUND(COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END) * 0.95,0) AS total_clientes_ajustados,
+
+    -- Ticket promedio ajustado (ventas netas ajustadas por cliente real)
+    ROUND(
+        (SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END), 2
+    ) AS ticket_promedio_ajustado,
+
+    -- Total de net sales ajustadas 
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END) * 0.95), 2
+    ) AS net_sales_ajustados,
+
+
+    -- Total facturado ajustado con el nuevo descuento
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN customer_id END) * 0.95) * 0.85, 2
+    ) AS facturado_ajustado,
+
+    -- Incremento porcentual de actual_net_sales a total_net_sales_ajustados
+    ROUND((net_sales_ajustados - actual_net_sales)/actual_net_sales *100,4
+        
+    ) AS incremento_porcentual_net_sales,
+
+    -- Incremento porcentual del total facturado (nuevo cálculo)
+    ROUND(
+        (facturado_ajustado - actual_facturado) / actual_facturado * 100, 2
+    ) AS incremento_porcentual_facturado
+
+
+FROM fct_sales
+WHERE recurrency_type = 'First-time'
+    AND first_promo_code_mapping IN ('Influencer Organic') and main_channel='Shopify'
+    AND YEAR(DATE) = 2024
+
+GROUP BY fecha, first_promo_code_mapping
+ORDER BY fecha, first_promo_code_mapping;
+
+
+
+--- AVG net sales first-time Shopify
+with tabla1 as(
+select date_trunc('month', date) AS fecha, sum(net_sales) as total_net_sales_mensual
+from fct_sales 
+where recurrency_type='First-time' AND YEAR(fecha) = 2024 AND main_channel='Shopify'
+group by fecha)
+select ROUND(AVG(total_net_sales_mensual),2) FROM tabla1;
+
+ --- AVG net sales first-time Shopify Influencer Organic
+with tabla2 as(
+select date_trunc('month', date) AS fecha, sum(net_sales) as total_net_sales_influencer
+from fct_sales 
+where recurrency_type='First-time' AND YEAR(fecha) = 2024  AND main_channel='Shopify' and first_promo_code_mapping='Influencer Organic'
+group by fecha, first_promo_code_mapping)
+
+select ROUND(AVG(total_net_sales_influencer),2) FROM tabla2;
+
+
+
+
+
+
+select date_trunc('month',date), sum(net_sales), div0(
+    "sum_net_sales_shopify" - 
+    case 
+        when mtd_window_type='1.MTD current month' 
+            then LAG("sum_net_sales_shopify", 1) OVER (ORDER BY "Time period" DESC NULLS LAST)
+        when mtd_window_type='2.MTD previous month' 
+            then LAG("sum_net_sales_shopify", 2) OVER (ORDER BY "Time period" DESC NULLS LAST)
+        when mtd_window_type='3.MTD LY same month' 
+            then LAG("sum_net_sales_shopify", 3) OVER (ORDER BY "Time period" DESC NULLS LAST) 
+    end, 
+    case 
+        when mtd_window_type='1.MTD current month' 
+            then LAG("sum_net_sales_shopify", 1) OVER (ORDER BY "Time period" DESC NULLS LAST)
+        when mtd_window_type='2.MTD previous month' 
+            then LAG("sum_net_sales_shopify", 2) OVER (ORDER BY "Time period" DESC NULLS LAST)
+        when mtd_window_type='3.MTD LY same month' 
+            then LAG("sum_net_sales_shopify", 3) OVER (ORDER BY "Time period" DESC NULLS LAST) 
+    end
+) as incremento
+from fct_general_kpis_adjusted
+group by mtd_window_type;
+
+
+
+---- AVG CLIENTES POR MES first- time
+with CLIENTES as(
+select date_trunc('month', date) AS fecha, COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' and product_type is not null THEN customer_id END) as total_clientes
+from fct_sales 
+where recurrency_type='First-time' AND YEAR(fecha) = 2024 and main_channel='Shopify' and first_promo_code_mapping='Influencer Organic'
+group by fecha)
+
+select ROUND(AVG(total_clientes),2) FROM CLIENTES;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+SELECT *
+FROM dev.FCT_SALES_shopify
+where YEAR(DATE) = 2024 AND main_channel='Shopify' AND order_id='6253697139013';
+
+
+
+
+
+
+--- DESCUENTOS SHOPIFY ALL
+--- net sales mensuales all
+with tabla1 as(
+select date_trunc('month', date) AS fecha, sum(net_sales) as total_net_sales_mensual
+from fct_sales 
+where YEAR(fecha) = 2024 AND main_channel='Shopify'
+group by fecha)
+select ROUND(AVG(total_net_sales_mensual),2) FROM tabla1;
+
+---net sales mensuales all con descuento influencer
+with tabla2 as(
+select date_trunc('month', date) AS fecha, sum(net_sales) as total_net_sales_influencer
+from fct_sales 
+where YEAR(fecha) = 2024  AND main_channel='Shopify' and PROMO_CODE_MAPPING='Influencer Organic'
+group by fecha, PROMO_CODE_MAPPING)
+
+select ROUND(AVG(total_net_sales_influencer),2) FROM tabla2;
+
+
+--- Pedido con descuento influencer organic
+with tabla1 as(
+select date_trunc('month', date) AS fecha, count(distinct order_id) as total_pedidos
+from fct_sales 
+where sale_type='order' and transaction_type='product' and product_type is not null and YEAR(fecha) = 2024 AND main_channel='Shopify' and promo_code_mapping='Influencer Organic'
+group by fecha)
+select ROUND(AVG(total_pedidos),0) FROM tabla1;
+
+
+---
+select date_trunc('month', date) AS fecha, sum(discounts), sum(net_sales) as total_net_sales_influencer
+from fct_sales 
+where YEAR(fecha) = 2024  AND main_channel='Shopify' and promo_code_mapping='Influencer Organic'
+group by fecha, promo_code_mapping;
+
+
+
+--- Sin bajada de clientes, reduccion del descuento del 20 al 15% y reducimos el fee de las influencers del 20% al 15%
+SELECT 
+    date_trunc('month', DATE) AS fecha,
+    promo_code_mapping,
+
+    -- Valores reales
+    COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) AS actual_total_pedidos,
+    sum(discounts) as actual_discounts,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns),2) AS actual_net_sales,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.20, 2) AS actual_fees,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.80, 2) AS actual_facturado,
+    
+    -- Valores ajustados (simulación con el nuevo descuento y pérdida de clientes)
+    ROUND(COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 1,0) AS total_pedidos_ajustados,
+
+    -- Ticket promedio ajustado (ventas netas ajustadas por cliente real)
+    ROUND(
+        (SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END), 2
+    ) AS ticket_promedio_ajustado,
+
+    -- Total de net sales ajustadas 
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 1), 2
+    ) AS net_sales_ajustados,
+
+
+    -- Total facturado ajustado con el nuevo descuento
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 1) * 0.85, 2
+    ) AS facturado_ajustado,
+
+    -- Incremento porcentual de actual_net_sales a total_net_sales_ajustados
+    ROUND(
+        (((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 1) 
+        - SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns)) 
+        / SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns)*100, 4
+    ) AS incremento_porcentual_net_sales,
+
+    -- Incremento porcentual del total facturado (nuevo cálculo)
+    ROUND(
+        (facturado_ajustado - actual_facturado) / actual_facturado * 100, 2
+    ) AS incremento_porcentual_facturado
+
+
+FROM fct_sales
+WHERE promo_code_mapping IN ('Influencer Organic') and main_channel='Shopify'
+    AND YEAR(DATE) = 2024
+
+GROUP BY fecha, promo_code_mapping
+ORDER BY fecha, promo_code_mapping;
+
+
+
+
+
+--- Con bajada de clientes, reduccion del descuento del 20 al 15% y reducimos el fee de las influencers del 20% al 15%
+
+
+SELECT 
+    date_trunc('month', DATE) AS fecha,
+    promo_code_mapping,
+
+    -- Valores reales
+    COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) AS actual_total_pedidos,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns),2) AS actual_net_sales,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.20, 2) AS actual_fees,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.80, 2) AS actual_facturado,
+    
+    -- Valores ajustados (simulación con el nuevo descuento y pérdida de clientes)
+    ROUND(COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 0.95,0) AS total_pedidos_ajustados,
+
+    -- Ticket promedio ajustado (ventas netas ajustadas por cliente real)
+    ROUND(
+        (SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END), 2
+    ) AS ticket_promedio_ajustado,
+
+    -- Total de net sales ajustadas 
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 0.95), 2
+    ) AS net_sales_ajustados,
+
+
+    -- Total facturado ajustado con el nuevo descuento
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 0.95) * 0.85, 2
+    ) AS facturado_ajustado,
+
+    -- Incremento porcentual de actual_net_sales a total_net_sales_ajustados
+    ROUND((net_sales_ajustados - actual_net_sales)/actual_net_sales *100,4
+        
+    ) AS incremento_porcentual_net_sales,
+
+    -- Incremento porcentual del total facturado (nuevo cálculo)
+    ROUND(
+        (facturado_ajustado - actual_facturado) / actual_facturado * 100, 2
+    ) AS incremento_porcentual_facturado
+
+
+FROM fct_sales
+WHERE promo_code_mapping IN ('Influencer Organic') and main_channel='Shopify'
+    AND YEAR(DATE) = 2024
+
+GROUP BY fecha, promo_code_mapping
+ORDER BY fecha, promo_code_mapping;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+--- DESCUENTOS SHOPIFY RETURNING
+--- net sales mensuales returning
+with tabla1 as(
+select date_trunc('month', date) AS fecha, sum(net_sales) as total_net_sales_mensual
+from fct_sales 
+where YEAR(fecha) = 2024 AND main_channel='Shopify' and recurrency_type='Returning'
+group by fecha)
+select ROUND(AVG(total_net_sales_mensual),2) FROM tabla1;
+
+---net sales mensuales returning con descuento influencer
+with tabla2 as(
+select date_trunc('month', date) AS fecha,promo_code_mapping, sum(net_sales) as total_net_sales_influencer
+from fct_sales 
+where recurrency_type='Returning' AND YEAR(fecha) = 2024  AND main_channel='Shopify' and promo_code_mapping='Influencer Organic'
+group by fecha, promo_code_mapping)
+
+select ROUND(AVG(total_net_sales_influencer),2) FROM tabla2;
+
+--- Pedido recurrentes con descuento influencer organic
+with tabla1 as(
+select date_trunc('month', date) AS fecha, count(distinct order_id) as total_pedidos
+from fct_sales 
+where sale_type='order' and transaction_type='product' and product_type is not null and YEAR(fecha) = 2024 AND main_channel='Shopify' and recurrency_type='Returning' ---and promo_code_mapping='Influencer Organic'
+group by fecha)
+select ROUND(AVG(total_pedidos),2) FROM tabla1;
+
+--- AVG descuentos mensuales
+with tabla1 as(
+select date_trunc('month', date) AS fecha, sum(discounts) as total_discounts
+from fct_sales 
+where sale_type='order' and transaction_type='product' and product_type is not null and YEAR(fecha) = 2024 AND main_channel='Shopify' and recurrency_type='Returning' and promo_code_mapping='Influencer Organic'
+group by fecha)
+select ROUND(AVG(total_discounts),2) FROM tabla1;
+
+
+
+
+--- Sin bajada de clientes, reduccion del descuento del 20 al 15% y reducimos el fee de las influencers del 20% al 15%
+SELECT 
+    date_trunc('month', DATE) AS fecha,
+    promo_code_mapping,
+
+    -- Valores reales
+    COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) AS actual_total_pedidos,
+    sum(discounts) as actual_discounts,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns),2) AS actual_net_sales,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.20, 2) AS actual_fees,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.80, 2) AS actual_facturado,
+    
+    -- Valores ajustados (simulación con el nuevo descuento y pérdida de clientes)
+    ROUND(COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 1,0) AS total_pedidos_ajustados,
+
+    -- Ticket promedio ajustado (ventas netas ajustadas por cliente real)
+    ROUND(
+        (SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END), 2
+    ) AS ticket_promedio_ajustado,
+
+    -- Total de net sales ajustadas 
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 1), 2
+    ) AS net_sales_ajustados,
+
+
+    -- Total facturado ajustado con el nuevo descuento
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 1) * 0.85, 2
+    ) AS facturado_ajustado,
+
+    -- Incremento porcentual de actual_net_sales a total_net_sales_ajustados
+    ROUND(
+        (((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 1) 
+        - SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns)) 
+        / SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns)*100, 4
+    ) AS incremento_porcentual_net_sales,
+
+    -- Incremento porcentual del total facturado (nuevo cálculo)
+    ROUND(
+        (facturado_ajustado - actual_facturado) / actual_facturado * 100, 2
+    ) AS incremento_porcentual_facturado
+
+
+FROM fct_sales
+WHERE recurrency_type = 'Returning'
+    AND promo_code_mapping IN ('Influencer Organic') and main_channel='Shopify'
+    AND YEAR(DATE) = 2024
+
+GROUP BY fecha, promo_code_mapping
+ORDER BY fecha, promo_code_mapping;
+
+
+
+
+
+--- Conn bajada de clientes, reduccion del descuento del 20 al 15% y reducimos el fee de las influencers del 20% al 15%
+
+
+SELECT 
+    date_trunc('month', DATE) AS fecha,
+    promo_code_mapping,
+
+    -- Valores reales
+    COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) AS actual_total_pedidos,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns),2) AS actual_net_sales,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.20, 2) AS actual_fees,
+    ROUND(SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + discounts + returns) * 0.80, 2) AS actual_facturado,
+    
+    -- Valores ajustados (simulación con el nuevo descuento y pérdida de clientes)
+    ROUND(COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 0.95,0) AS total_pedidos_ajustados,
+
+    -- Ticket promedio ajustado (ventas netas ajustadas por cliente real)
+    ROUND(
+        (SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END), 2
+    ) AS ticket_promedio_ajustado,
+
+    -- Total de net sales ajustadas 
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 0.95), 2
+    ) AS net_sales_ajustados,
+
+
+    -- Total facturado ajustado con el nuevo descuento
+    ROUND(
+        ((SUM(gross_sales + shipping_net_revenue_item + shipping_net_revenue_refund + (discounts * 15/20) + returns)) 
+        / COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END))
+        * (COUNT(DISTINCT CASE WHEN sale_type='order' AND transaction_type = 'product' THEN order_id END) * 0.95) * 0.85, 2
+    ) AS facturado_ajustado,
+
+    -- Incremento porcentual de actual_net_sales a total_net_sales_ajustados
+    ROUND((net_sales_ajustados - actual_net_sales)/actual_net_sales *100,4
+        
+    ) AS incremento_porcentual_net_sales,
+
+    -- Incremento porcentual del total facturado (nuevo cálculo)
+    ROUND(
+        (facturado_ajustado - actual_facturado) / actual_facturado * 100, 2
+    ) AS incremento_porcentual_facturado
+
+
+FROM fct_sales
+WHERE recurrency_type = 'Returning'
+    AND promo_code_mapping IN ('Influencer Organic') and main_channel='Shopify'
+    AND YEAR(DATE) = 2024
+
+GROUP BY fecha, promo_code_mapping
+ORDER BY fecha, promo_code_mapping;
+
+
+
+
+
+
+
+
+
+
+---
+select date_trunc('month', date) AS fecha, sum(discounts), sum(net_sales) as total_net_sales_influencer
+from fct_sales 
+where recurrency_type='Returning' AND YEAR(fecha) = 2024  AND main_channel='Shopify' and first_promo_code_mapping='Influencer Organic'
+group by fecha, first_promo_code_mapping;
+
+
+select count(distinct customer_id)
+from fct_sales
+where sale_type='product' and transaction_type='order' and YEAR(fecha) = 2024 AND main_channel='Shopify' and recurrency_type='First-time';
+
+
+select order_id,date, sale_type, transaction_type, net_sales, returns, promo_code_mapping
+from fct_sales
+where year(date)=2024 and order_id='5984829407557'
+limit 500;
+
+
+
+
+select * from fct_cohorts_purchases where order_id='5984829407557';
+
+
+WITH TABLA1 AS(SELECT 
+    DATEDIFF('month', 
+             DATE_TRUNC('month', CUSTOMER_FIRST_ORDER_DATE::DATE), 
+             DATE_TRUNC('month', DATE::DATE)) AS "RUNNING MONTH",
+    DATE_TRUNC('year', CUSTOMER_FIRST_ORDER_DATE) AS "COHORT YEAR",
+    div0(
+        SUM(NET_SALES - TOTAL_COST) 
+        OVER (
+            PARTITION BY DATE_TRUNC('year', CUSTOMER_FIRST_ORDER_DATE) 
+            ORDER BY DATEDIFF('month', DATE_TRUNC('month', CUSTOMER_FIRST_ORDER_DATE::DATE), DATE_TRUNC('month', DATE::DATE)) ASC
+        ), 
+        COUNT(DISTINCT CUSTOMER_ID) 
+        OVER (PARTITION BY DATE_TRUNC('year', CUSTOMER_FIRST_ORDER_DATE))
+    ) AS LTV
+FROM FCT_COHORTS_PURCHASES
+WHERE DATE_TRUNC('year', CUSTOMER_FIRST_ORDER_DATE) >= '2024-01-01'
+ORDER BY "COHORT YEAR", "RUNNING MONTH")
+
+SELECT DISTINCT "RUNNING MONTH", "COHORT YEAR", LTV
+FROM TABLA1; 
+
+
+
+div0(
+    sum(sum(net_sales) - sum(TOTAL_COST)) 
+    over (
+        partition by "Cohort Year" 
+        order by "Running Month" asc
+    ), 
+    AVG(count(distinct customer_id))
+    over (partition by "Cohort Year")
+);
+
+
+
